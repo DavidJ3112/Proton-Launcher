@@ -245,7 +245,9 @@ load_game_config() {
         "SELECT prefix_mode, manual_name, proton_name, cheat_engine_autoboot, mangohud
          FROM games WHERE marker_id = '$esc_marker' LIMIT 1;")"
 
-    [ -z "$row" ] && return 1
+    if [ -z "$row" ]; then
+        return 1
+    fi
 
     IFS='|' read -r PREFIX_MODE MANUAL_NAME SEL_PROTON_NAME CE_AUTOBOOT MANGOHUD <<< "$row"
 
@@ -255,6 +257,7 @@ load_game_config() {
     else
         SEL_PROTON_PATH=""
     fi
+
     return 0
 }
 
@@ -581,7 +584,7 @@ sqlite3 "$DB" "INSERT INTO games
 export WINEPREFIX="$PREFIX"
 export PROTONPATH="$SEL_PROTON_PATH"
 export WINEDLLOVERRIDES="winhttp.dll=n,b;winegstreamer="
-
+export PROTON_ENABLE_WAYLAND=0
 # Proton/Wine Debug Log configuration
 export WINEDEBUG="+err,+warn,+module"
 export PROTON_LOG=1
