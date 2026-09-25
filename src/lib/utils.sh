@@ -187,8 +187,74 @@ get_cheat_engine_exe() {
     fi
 }
 
-# Setup mute on focus loss using xdotool and pactl
-# This monitors the game window and mutes/unmutes system audio based on focus
+# Detect audio system (pactl for PulseAudio, wpctl for PipeWire)
+detect_audio_system() {
+    if command -v wpctl >/dev/null 2>&1; then
+        echo "pipewire"
+    elif command -v pactl >/dev/null 2>&1; then
+        echo "pulseaudio"
+    else
+        echo "none"
+    fi
+}
+
+# Get default audio sink for current system
+get_audio_sink() {
+    local audio_system
+    audio_system=$(detect_audio_system)
+    
+    case "$audio_system" in
+        "pipewire")
+            # PipeWire: get default sink name
+            wpctl status 2>/dev/null | grep -oP 'Sink: \K[^\s]+' | head -n1
+            ;;
+        "pulseaudio")
+            # PulseAudio: get default sink
+            pactl info 2>/dev/null | grep -oP 'Default Sink: \K.*' | head -n1
+            ;;
+        *)
+            echo ""
+            ;;
+    esac
+}
+
+# Set mute state for current audio system
+set_audio_mute() {
+    local state="$1"  # 0=unmute, 1=mute
+    local sink="$2"
+    
+    if [ -z "$sink" ]; then
+        return 1
+    fi
+    
+    local audio_system
+    audio_system=$(detect_audio_system)
+    
+    case "$audio_system" in
+        "pipewire")
+            if [ "$state" -eq 1 ]; then
+                wpctl set-mute "$sink" 1 2>/dev/null
+            else
+                wpctl set-mute "$sink" 0 2>/dev/null
+            fi
+            ;;
+        "pulseaudio")
+            if [ "$state" -eq 1 ]; then
+                pactl set-sink-mute "$sink" 1 2>/dev/null
+            else
+                pactl set-sink-mute "$sink" 0 2>/dev/null
+            fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+    
+    return 0
+}
+
+# Setup mute on focus loss using xdotool and appropriate audio tool
+# Supports both PulseAudio (pactl) and PipeWire (wpctl)
 setup_mute_on_focus_loss() {
     local enabled="$1"
     local game_pid="$2"
@@ -198,11 +264,21 @@ setup_mute_on_focus_loss() {
     fi
     
     # Check if we have required tools
-    if ! command -v xdotool >/dev/null 2>&1 || ! command -v pactl >/dev/null 2>&1; then
-        echo "WARNING: Mute on focus loss requires xdotool and pactl."
-        echo "Install with: sudo apt install xdotool pulseaudio-utils"
+    if ! command -v xdotool >/dev/null 2>&1; then
+        echo "WARNING: Mute on focus loss requires xdotool."
+        echo "Install with: sudo pacman -S xdotool"
         return 1
     fi
+    
+    local audio_system
+    audio_system=$(detect_audio_system)
+    
+    if [ "$audio_system" = "none" ]; then
+        echo "WARNING: No supported audio system found (need PipeWire or PulseAudio)"
+        return 1
+    fi
+    
+    echo "Using audio system: $audio_system"
     
     # Wait for game window to appear (umu/Proton takes time to launch)
     echo "Waiting for game window to appear for mute monitoring..."
@@ -229,13 +305,9 @@ setup_mute_on_focus_loss() {
     
     echo "Mute on focus loss monitoring window: $win_id (PID: $game_pid)"
     
-    # Get the sink name properly
+    # Get the sink name
     local current_sink
-    current_sink=$(pactl info 2>/dev/null | grep -oP 'Default Sink: \K.*' | head -n1)
-    
-    if [ -z "$current_sink" ]; then
-        current_sink=$(pactl get default-sink 2>/dev/null | awk '{print $2}')
-    fi
+    current_sink=$(get_audio_sink)
     
     if [ -z "$current_sink" ]; then
         echo "WARNING: Could not determine audio sink for mute on focus loss"
@@ -243,6 +315,9 @@ setup_mute_on_focus_loss() {
     fi
     
     echo "Using audio sink: $current_sink"
+    
+    # Initial state: unmuted
+    set_audio_mute 0 "$current_sink"
     
     # Monitor focus changes in background
     (
@@ -255,14 +330,14 @@ setup_mute_on_focus_loss() {
             if [ "$current_focus" = "$win_id" ]; then
                 # Game has focus - unmute
                 if [ "$last_focus" != "$current_focus" ]; then
-                    pactl set-sink-mute "$current_sink" 0 2>/dev/null
+                    set_audio_mute 0 "$current_sink"
                     last_focus="$current_focus"
                     echo "[Mute Monitor] Game focused - audio UNMUTED"
                 fi
             else
                 # Game lost focus - mute
                 if [ "$last_focus" != "$current_focus" ]; then
-                    pactl set-sink-mute "$current_sink" 1 2>/dev/null
+                    set_audio_mute 1 "$current_sink"
                     last_focus="$current_focus"
                     echo "[Mute Monitor] Game unfocused - audio MUTED"
                 fi
@@ -272,7 +347,7 @@ setup_mute_on_focus_loss() {
         done
         
         # Cleanup: ensure audio is unmuted when game exits
-        pactl set-sink-mute "$current_sink" 0 2>/dev/null
+        set_audio_mute 0 "$current_sink"
         echo "[Mute Monitor] Game exited - audio UNMUTED"
     ) &
     
@@ -367,7 +442,7 @@ apply_window_mode_post_launch() {
                 ) &
             else
                 echo "WARNING: xdotool not installed, cannot maximize window"
-                echo "Install with: sudo apt install xdotool"
+                echo "Install with: sudo pacman -S xdotool"
             fi
             ;;
         "fullscreen")
@@ -405,7 +480,7 @@ apply_window_mode_post_launch() {
                 ) &
             else
                 echo "WARNING: xdotool not installed, cannot set fullscreen"
-                echo "Install with: sudo apt install xdotool"
+                echo "Install with: sudo pacman -S xdotool"
             fi
             ;;
         "fixed")
