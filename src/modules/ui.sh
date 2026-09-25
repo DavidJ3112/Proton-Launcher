@@ -169,7 +169,7 @@ show_launch_or_settings() {
             "Fix Proton list"*)
                 manage_missing_protons
                 ;;
-            "Cancel"|\"")
+            "Cancel")
                 echo "Cancelled by user."
                 exit 0
                 ;;

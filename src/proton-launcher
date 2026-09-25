@@ -248,7 +248,6 @@ if load_game_config "$MARKER_ID"; then
     HAVE_SAVED=1
     
     # Load saved extensions for this game
-    local extensions_rows
     extensions_rows=$(get_game_extensions "$MARKER_ID")
     while IFS='|' read -r ext_name ext_enabled; do
         [ -z "$ext_name" ] && continue
@@ -276,7 +275,6 @@ fi
 
 # Parse window flag (format: WxH or WxH:scaling)
 if [ -n "$FLAG_WINDOW" ]; then
-    local width height scaling
     if [[ "$FLAG_WINDOW" =~ ^([0-9]+)x([0-9]+)(:([01]))?$ ]]; then
         WINDOW_WIDTH="${BASH_REMATCH[1]}"
         WINDOW_HEIGHT="${BASH_REMATCH[2]}"
