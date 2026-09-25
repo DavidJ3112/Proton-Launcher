@@ -1,0 +1,29 @@
+# Determine the non-root user when invoked via sudo
+REAL_USER="${SUDO_USER:-$USER}"
+USER_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
+# Logging Directories
+LOG_DIR="$USER_HOME/.local/share/game-launcher/logs"
+GAME_LOG_DIR="$USER_HOME/.local/share/game-launcher/gamelogs"
+
+LOG="$LOG_DIR/game-launcher.log"
+
+# Database
+DB="$USER_HOME/.local/share/game-launcher/games.db"
+
+# Cheat Engine Directory and Default Architecture Path Selection
+CE_DIR="$USER_HOME/Cheat Engine"
+if [ "$(uname -m)" = "x86_64" ] && [ -f "$CE_DIR/cheatengine-x86_64.exe" ]; then
+    CHEAT_ENGINE="$CE_DIR/cheatengine-x86_64.exe"
+else
+    CHEAT_ENGINE="$CE_DIR/Cheat Engine.exe"
+fi
+
+# Where to look for Proton installations
+PROTON_BASE="$USER_HOME/.local/share/Steam/compatibilitytools.d"
+STEAM_PROTON="$USER_HOME/.local/share/Steam/steamapps/common"
+
+# Where per-game Proton prefixes live
+PREFIX_ROOT="$USER_HOME/Games/ProtonPrefixes"
