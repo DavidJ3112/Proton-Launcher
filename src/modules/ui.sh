@@ -148,54 +148,40 @@ show_launch_or_settings() {
                 fi
                 return 0
                 ;;
-            "Proton:"*|"2") 
-                if [ -z "${choice#"Proton: "}" ] || [ "$choice" = "2" ]; then
-                    pick_proton
-                fi
+            "Proton:"*)
+                pick_proton
                 ;;
-            "Prefix mode:"*|"3")
-                if [ -z "${choice#"Prefix mode: "}" ] || [ "$choice" = "3" ]; then
-                    pick_prefix_mode
-                fi
+            "Prefix mode:"*)
+                pick_prefix_mode
                 ;;
-            "Window:"*|"4")
-                if [ -z "${choice#"Window: "}" ] || [ "$choice" = "4" ]; then
-                    pick_window_scaling
-                fi
+            "Window:"*)
+                pick_window_scaling
                 ;;
-            "Mute on Focus Loss:"*|"5")
-                if [ -z "${choice#"Mute on Focus Loss: "}" ] || [ "$choice" = "5" ]; then
-                    pick_mute_on_focus_loss
-                fi
+            "Mute on Focus Loss:"*)
+                pick_mute_on_focus_loss
                 ;;
-            "Cheat Engine autoboot:"*|"6")
-                if [ -z "${choice#"Cheat Engine autoboot: "}" ] || [ "$choice" = "6" ]; then
-                    CE_AUTOBOOT=$([ "$CE_AUTOBOOT" = "1" ] && echo 0 || echo 1)
-                fi
+            "Cheat Engine autoboot:"*)
+                CE_AUTOBOOT=$([ "$CE_AUTOBOOT" = "1" ] && echo 0 || echo 1)
                 ;;
-            "MangoHud:"*|"7")
-                if [ -z "${choice#"MangoHud: "}" ] || [ "$choice" = "7" ]; then
-                    MANGOHUD=$([ "$MANGOHUD" = "1" ] && echo 0 || echo 1)
-                fi
+            "MangoHud:"*)
+                MANGOHUD=$([ "$MANGOHUD" = "1" ] && echo 0 || echo 1)
                 ;;
             "Fix Proton list"*)
                 manage_missing_protons
                 ;;
-            "Cancel"|"")
+            "Cancel"|\"")
                 echo "Cancelled by user."
                 exit 0
                 ;;
             *)
                 # Check if it's an extension toggle
                 local found=0
-                local idx=8
                 for ext in $AVAILABLE_EXTENSIONS; do
-                    if [[ "$choice" == "$ext:"* ]] || [ "$choice" = "$idx" ]; then
+                    if [[ "$choice" == "$ext:"* ]]; then
                         EXTENSIONS_ENABLED[$ext]=$([ "${EXTENSIONS_ENABLED[$ext]:-0}" = "1" ] && echo 0 || echo 1)
                         found=1
                         break
                     fi
-                    ((idx++))
                 done
                 
                 if [ "$found" -eq 0 ]; then

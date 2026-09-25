@@ -121,7 +121,8 @@ cleanup_stale_running() {
 
 # Load game configuration from database
 load_game_config() {
-    local marker="$1" row esc_marker
+    local marker="$1"
+    local row esc_marker
     esc_marker="$(sql_escape "$marker")"
     row="$(sqlite3 -separator '|' "$DB" \
         "SELECT prefix_mode, manual_name, proton_name, cheat_engine_autoboot, mangohud, \
@@ -186,6 +187,34 @@ get_window_geometry() {
             # For non-scaling, use virtual desktop
             echo "${width}x${height}"
         fi
+    fi
+}
+
+# Get Cheat Engine executable path
+get_cheat_engine_exe() {
+    local ce_dir
+    ce_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
+
+    if [ "$(uname -m)" = "x86_64" ] && [ -f "$ce_dir/cheatengine-x86_64.exe" ]; then
+        echo "$ce_dir/cheatengine-x86_64.exe"
+    elif [ -f "$ce_dir/Cheat Engine.exe" ]; then
+        echo "$ce_dir/Cheat Engine.exe"
+    else
+        echo "${CHEAT_ENGINE:-}"
+    fi
+}
+
+# Get Cheat Engine executable path
+get_cheat_engine_exe() {
+    local ce_dir
+    ce_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
+
+    if [ "$(uname -m)" = "x86_64" ] && [ -f "$ce_dir/cheatengine-x86_64.exe" ]; then
+        echo "$ce_dir/cheatengine-x86_64.exe"
+    elif [ -f "$ce_dir/Cheat Engine.exe" ]; then
+        echo "$ce_dir/Cheat Engine.exe"
+    else
+        echo "${CHEAT_ENGINE:-}"
     fi
 }
 
