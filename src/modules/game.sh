@@ -2,6 +2,9 @@
 # Game Module for Proton Launcher
 # Handles game discovery, launching, and management
 
+# Global variable to store mute monitor PID
+MUTE_MONITOR_PID=""
+
 # Launch game with selected configuration
 launch_game() {
     local game_path="$1"
@@ -56,6 +59,7 @@ launch_game() {
         echo "  Resolution: ${WINDOW_WIDTH}x${WINDOW_HEIGHT}"
     fi
     echo "  Game Log: $GAME_LOG"
+    echo "  Mute on Focus Loss: ${MUTE_ON_FOCUS_LOSS:-0}"
 
     # Launch game
     if [ "$MANGOHUD" = "1" ]; then
@@ -68,23 +72,26 @@ launch_game() {
     # Register running game
     register_running_game "$marker_id" "$game_path" "$PID"
 
-    # Apply post-launch window mode (maximized, fullscreen)
+    # Apply post-launch window mode (maximized, fullscreen, fixed resizing)
     apply_window_mode_post_launch "${WINDOW_MODE:-default}" "$PID"
 
-    # Setup mute on focus loss monitoring
+    # Setup mute on focus loss monitoring AFTER window has had time to appear
     if [ "${MUTE_ON_FOCUS_LOSS:-0}" = "1" ]; then
+        sleep 1  # Give the game a moment to start
         setup_mute_on_focus_loss "1" "$PID"
     fi
 
     # Launch extensions if enabled
     launch_enabled_extensions "$marker_id"
 
+    # Wait for game to finish
     wait "$PID"
     local exit_code=$?
 
     # Clean up mute monitor if it exists
     if [ -n "$MUTE_MONITOR_PID" ] && kill -0 "$MUTE_MONITOR_PID" 2>/dev/null; then
         kill "$MUTE_MONITOR_PID" 2>/dev/null
+        wait "$MUTE_MONITOR_PID" 2>/dev/null
     fi
 
     # Clean up running game entry
