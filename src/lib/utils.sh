@@ -199,14 +199,32 @@ detect_audio_system() {
 }
 
 # Get default audio sink for current system
+# For PipeWire: tries wpctl, pw-cli, and pactl (compatibility layer)
+# For PulseAudio: uses pactl
 get_audio_sink() {
     local audio_system
     audio_system=$(detect_audio_system)
     
     case "$audio_system" in
         "pipewire")
-            # PipeWire: get default sink name
-            wpctl status 2>/dev/null | grep -oP 'Sink: \K[^\s]+' | head -n1
+            # Try wpctl first (most common)
+            local sink
+            
+            # Method 1: Use @DEFAULT_AUDIO_SINK@ (special PipeWire identifier)
+            # This should work without needing to discover the sink ID
+            echo "@DEFAULT_AUDIO_SINK@"
+            return 0
+            
+            # Method 2: Try wpctl status (fallback - may not work on all versions)
+            # sink=$(wpctl status 2>/dev/null | grep -oP 'Sink: \K[^\s]+' | head -n1)
+            
+            # Method 3: Try pw-cli (PipeWire CLI)
+            # sink=$(pw-cli list-objects Sink 2>/dev/null | grep -oP 'id \K[0-9]+' | head -n1)
+            
+            # Method 4: Try pactl through PipeWire's PulseAudio compatibility
+            # sink=$(pactl info 2>/dev/null | grep -oP 'Default Sink: \K.*' | head -n1)
+            
+            # If we get here, all methods failed
             ;;
         "pulseaudio")
             # PulseAudio: get default sink
@@ -219,11 +237,14 @@ get_audio_sink() {
 }
 
 # Set mute state for current audio system
+# For PipeWire: uses wpctl with @DEFAULT_AUDIO_SINK@ or sink ID
+# For PulseAudio: uses pactl
 set_audio_mute() {
     local state="$1"  # 0=unmute, 1=mute
     local sink="$2"
     
     if [ -z "$sink" ]; then
+        echo "[Audio] No sink specified, cannot mute"
         return 1
     fi
     
@@ -232,13 +253,25 @@ set_audio_mute() {
     
     case "$audio_system" in
         "pipewire")
-            if [ "$state" -eq 1 ]; then
-                wpctl set-mute "$sink" 1 2>/dev/null
+            # PipeWire: use wpctl
+            # @DEFAULT_AUDIO_SINK@ is a special identifier that always points to the default sink
+            if [ "$sink" = "@DEFAULT_AUDIO_SINK@" ]; then
+                if [ "$state" -eq 1 ]; then
+                    wpctl set-mute @DEFAULT_AUDIO_SINK@ 1 2>/dev/null
+                else
+                    wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null
+                fi
             else
-                wpctl set-mute "$sink" 0 2>/dev/null
+                # Specific sink ID
+                if [ "$state" -eq 1 ]; then
+                    wpctl set-mute "$sink" 1 2>/dev/null
+                else
+                    wpctl set-mute "$sink" 0 2>/dev/null
+                fi
             fi
             ;;
         "pulseaudio")
+            # PulseAudio: use pactl
             if [ "$state" -eq 1 ]; then
                 pactl set-sink-mute "$sink" 1 2>/dev/null
             else
@@ -246,11 +279,35 @@ set_audio_mute() {
             fi
             ;;
         *)
+            echo "[Audio] No supported audio system found"
             return 1
             ;;
     esac
     
     return 0
+}
+
+# Get current mute state for debugging
+get_audio_mute_state() {
+    local sink="$1"
+    local audio_system
+    audio_system=$(detect_audio_system)
+    
+    case "$audio_system" in
+        "pipewire")
+            if [ "$sink" = "@DEFAULT_AUDIO_SINK@" ]; then
+                wpctl get-mute @DEFAULT_AUDIO_SINK@ 2>/dev/null
+            else
+                wpctl get-mute "$sink" 2>/dev/null
+            fi
+            ;;
+        "pulseaudio")
+            pactl get-sink-mute "$sink" 2>/dev/null
+            ;;
+        *)
+            echo "Unknown"
+            ;;
+    esac
 }
 
 # Setup mute on focus loss using xdotool and appropriate audio tool
@@ -305,12 +362,41 @@ setup_mute_on_focus_loss() {
     
     echo "Mute on focus loss monitoring window: $win_id (PID: $game_pid)"
     
-    # Get the sink name
+    # Get the sink name - for PipeWire we use the special @DEFAULT_AUDIO_SINK@
     local current_sink
     current_sink=$(get_audio_sink)
     
     if [ -z "$current_sink" ]; then
         echo "WARNING: Could not determine audio sink for mute on focus loss"
+        # Try to list available sinks for debugging
+        echo "Debug: Trying to detect audio sinks..."
+        
+        local audio_system
+        audio_system=$(detect_audio_system)
+        
+        case "$audio_system" in
+            "pipewire")
+                echo "Debug: wpctl status:"
+                wpctl status 2>&1 | head -20
+                echo "Debug: wpctl list-sinks:"
+                wpctl list-sinks 2>&1
+                ;;
+            "pulseaudio")
+                echo "Debug: pactl list sinks:"
+                pactl list sinks 2>&1 | head -20
+                ;;
+        esac
+        
+        # Fallback: try using @DEFAULT_AUDIO_SINK@ for PipeWire
+        if [ "$audio_system" = "pipewire" ]; then
+            current_sink="@DEFAULT_AUDIO_SINK@"
+            echo "Fallback: Using @DEFAULT_AUDIO_SINK@ for PipeWire"
+        fi
+    fi
+    
+    if [ -z "$current_sink" ]; then
+        echo "ERROR: Cannot determine audio sink. Mute on focus loss will not work."
+        echo "Please report this issue with the debug output above."
         return 1
     fi
     
