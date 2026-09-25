@@ -2,9 +2,6 @@
 # Game Module for Proton Launcher
 # Handles game discovery, launching, and management
 
-# Global variable to store mute monitor PID
-MUTE_MONITOR_PID=""
-
 # Launch game with selected configuration
 launch_game() {
     local game_path="$1"
@@ -59,7 +56,6 @@ launch_game() {
         echo "  Resolution: ${WINDOW_WIDTH}x${WINDOW_HEIGHT}"
     fi
     echo "  Game Log: $GAME_LOG"
-    echo "  Mute on Focus Loss: ${MUTE_ON_FOCUS_LOSS:-0}"
 
     # Launch game
     if [ "$MANGOHUD" = "1" ]; then
@@ -75,25 +71,12 @@ launch_game() {
     # Apply post-launch window mode (maximized, fullscreen, fixed resizing)
     apply_window_mode_post_launch "${WINDOW_MODE:-default}" "$PID" "$AUTO_NAME"
 
-    # Setup mute on focus loss monitoring AFTER window has had time to appear
-    # Pass the game name to help with window detection
-    if [ "${MUTE_ON_FOCUS_LOSS:-0}" = "1" ]; then
-        sleep 1  # Give the game a moment to start
-        setup_mute_on_focus_loss "1" "$PID" "$AUTO_NAME"
-    fi
-
     # Launch extensions if enabled
     launch_enabled_extensions "$marker_id"
 
     # Wait for game to finish
     wait "$PID"
     local exit_code=$?
-
-    # Clean up mute monitor if it exists
-    if [ -n "$MUTE_MONITOR_PID" ] && kill -0 "$MUTE_MONITOR_PID" 2>/dev/null; then
-        kill "$MUTE_MONITOR_PID" 2>/dev/null
-        wait "$MUTE_MONITOR_PID" 2>/dev/null
-    fi
 
     # Clean up running game entry
     sqlite3 "$DB" "DELETE FROM running_games WHERE marker_id = '$(sql_escape "$marker_id")';"
@@ -115,7 +98,7 @@ persist_game_config() {
     sqlite3 "$DB" "INSERT INTO games
         (marker_id, name, prefix_mode, manual_name, proton_name,
          cheat_engine_autoboot, mangohud, is_32bit, last_path, last_launched,
-         mute_on_focus_loss, window_width, window_height, window_mode)
+         window_width, window_height, window_mode)
         VALUES
         ('$(sql_escape "$marker_id")',
          '$(sql_escape "$AUTO_NAME")',
@@ -127,7 +110,6 @@ persist_game_config() {
          $IS_32BIT,
          '$(sql_escape "$GAME")',
          datetime('now'),
-         ${MUTE_ON_FOCUS_LOSS:-0},
          ${WINDOW_WIDTH:-NULL},
          ${WINDOW_HEIGHT:-NULL},
          '$(sql_escape "${WINDOW_MODE:-default}")')
@@ -141,7 +123,6 @@ persist_game_config() {
             is_32bit=$IS_32BIT,
             last_path='$(sql_escape "$GAME")',
             last_launched=datetime('now'),
-            mute_on_focus_loss=${MUTE_ON_FOCUS_LOSS:-0},
             window_width=${WINDOW_WIDTH:-NULL},
             window_height=${WINDOW_HEIGHT:-NULL},
             window_mode='$(sql_escape "${WINDOW_MODE:-default}")';"

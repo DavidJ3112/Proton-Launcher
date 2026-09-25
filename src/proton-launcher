@@ -110,7 +110,6 @@ FLAG_PREFIX_MODE=""
 FLAG_MANGO=""
 FLAG_CE=""
 CONFIG_MODE=0
-FLAG_MUTE=""
 FLAG_WINDOW=""
 
 while [[ $# -gt 0 ]]; do
@@ -139,10 +138,7 @@ while [[ $# -gt 0 ]]; do
             FLAG_CE="$2"
             shift 2
             ;;
-        --mute)
-            FLAG_MUTE="$2"
-            shift 2
-            ;;
+
         --window)
             FLAG_WINDOW="$2"
             shift 2
@@ -260,7 +256,6 @@ else
     SEL_PROTON_PATH=""
     CE_AUTOBOOT=0
     MANGOHUD=1
-    MUTE_ON_FOCUS_LOSS=0
     WINDOW_WIDTH=""
     WINDOW_HEIGHT=""
     WINDOW_MODE="default"
@@ -271,7 +266,7 @@ fi
 [ -n "$FLAG_PREFIX_MODE" ] && PREFIX_MODE="$FLAG_PREFIX_MODE"
 [ -n "$FLAG_MANGO" ] && MANGOHUD="$FLAG_MANGO"
 [ -n "$FLAG_CE" ] && CE_AUTOBOOT="$FLAG_CE"
-[ -n "$FLAG_MUTE" ] && MUTE_ON_FOCUS_LOSS="$FLAG_MUTE"
+
 
 # Parse window flag (format: WxH or mode:WxH)
 if [ -n "$FLAG_WINDOW" ]; then

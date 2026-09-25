@@ -88,7 +88,6 @@ show_launch_or_settings() {
             "Proton: ${SEL_PROTON_NAME:-[none selected]}"
             "$mode_line"
             "$window_line"
-            "Mute on Focus Loss: $([ "${MUTE_ON_FOCUS_LOSS:-0}" = "1" ] && echo On || echo Off)"
             "Cheat Engine autoboot: $([ "$CE_AUTOBOOT" = "1" ] && echo On || echo Off)"
             "MangoHud: $([ "$MANGOHUD" = "1" ] && echo On || echo Off)"
         )
@@ -136,9 +135,6 @@ show_launch_or_settings() {
                 ;;
             "Window:"*)
                 pick_window_mode
-                ;;
-            "Mute on Focus Loss:"*)
-                MUTE_ON_FOCUS_LOSS=$([ "${MUTE_ON_FOCUS_LOSS:-0}" = "1" ] && echo 0 || echo 1)
                 ;;
             "Cheat Engine autoboot:"*)
                 CE_AUTOBOOT=$([ "$CE_AUTOBOOT" = "1" ] && echo 0 || echo 1)

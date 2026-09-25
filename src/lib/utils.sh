@@ -125,7 +125,7 @@ load_game_config() {
     esc_marker="$(sql_escape "$marker")"
     row="$(sqlite3 -separator '|' "$DB" \
         "SELECT prefix_mode, manual_name, proton_name, cheat_engine_autoboot, mangohud, \
-                mute_on_focus_loss, window_width, window_height, window_mode
+                window_width, window_height, window_mode
          FROM games WHERE marker_id = '$esc_marker' LIMIT 1;")"
 
     if [ -z "$row" ]; then
@@ -133,7 +133,7 @@ load_game_config() {
     fi
 
     IFS='|' read -r PREFIX_MODE MANUAL_NAME SEL_PROTON_NAME CE_AUTOBOOT MANGOHUD \
-         MUTE_ON_FOCUS_LOSS WINDOW_WIDTH WINDOW_HEIGHT WINDOW_MODE <<< "$row"
+         WINDOW_WIDTH WINDOW_HEIGHT WINDOW_MODE <<< "$row"
 
     if [ -n "$SEL_PROTON_NAME" ]; then
         SEL_PROTON_PATH="$(sqlite3 "$DB" \
@@ -187,106 +187,6 @@ get_cheat_engine_exe() {
     fi
 }
 
-# Detect audio system (pactl for PulseAudio, wpctl for PipeWire)
-detect_audio_system() {
-    if command -v wpctl >/dev/null 2>&1; then
-        echo "pipewire"
-    elif command -v pactl >/dev/null 2>&1; then
-        echo "pulseaudio"
-    else
-        echo "none"
-    fi
-}
-
-# List all audio sinks for debugging
-list_audio_sinks() {
-    local audio_system
-    audio_system=$(detect_audio_system)
-    
-    case "$audio_system" in
-        "pipewire")
-            echo "=== PipeWire Sinks ==="
-            # Try the correct wpctl syntax
-            if command -v wpctl >/dev/null 2>&1; then
-                # Modern wpctl: list audio sinks
-                wpctl list audio sinks 2>/dev/null || \
-                wpctl list-sinks 2>/dev/null || \
-                echo "wpctl list commands not working, trying status..."
-                wpctl status 2>/dev/null | head -20
-            fi
-            ;;
-        "pulseaudio")
-            echo "=== PulseAudio Sinks ==="
-            pactl list sinks short 2>/dev/null || \
-            pactl list sinks 2>/dev/null | head -20
-            ;;
-        *)
-            echo "No audio system detected"
-            ;;
-    esac
-}
-
-# Get default audio sink for current system
-# For PipeWire: uses @DEFAULT_AUDIO_SINK@ which always works
-# For PulseAudio: uses pactl to get default sink
-get_audio_sink() {
-    local audio_system
-    audio_system=$(detect_audio_system)
-    
-    case "$audio_system" in
-        "pipewire")
-            # PipeWire: use the special @DEFAULT_AUDIO_SINK@ identifier
-            # This always points to the default sink and doesn't require discovery
-            echo "@DEFAULT_AUDIO_SINK@"
-            ;;
-        "pulseaudio")
-            # PulseAudio: get default sink
-            pactl info 2>/dev/null | grep -oP 'Default Sink: \K.*' | head -n1
-            ;;
-        *)
-            echo ""
-            ;;
-    esac
-}
-
-# Set mute state for current audio system
-set_audio_mute() {
-    local state="$1"  # 0=unmute, 1=mute
-    local sink="$2"
-    
-    if [ -z "$sink" ]; then
-        echo "[Audio] No sink specified, cannot mute"
-        return 1
-    fi
-    
-    local audio_system
-    audio_system=$(detect_audio_system)
-    
-    case "$audio_system" in
-        "pipewire")
-            # PipeWire: use wpctl with @DEFAULT_AUDIO_SINK@
-            if [ "$state" -eq 1 ]; then
-                wpctl set-mute "$sink" 1 2>/dev/null
-            else
-                wpctl set-mute "$sink" 0 2>/dev/null
-            fi
-            ;;
-        "pulseaudio")
-            # PulseAudio: use pactl
-            if [ "$state" -eq 1 ]; then
-                pactl set-sink-mute "$sink" 1 2>/dev/null
-            else
-                pactl set-sink-mute "$sink" 0 2>/dev/null
-            fi
-            ;;
-        *)
-            echo "[Audio] No supported audio system found"
-            return 1
-            ;;
-    esac
-    
-    return 0
-}
 
 # Find game window using multiple strategies
 # Strategy 1: Direct PID match
@@ -354,103 +254,10 @@ find_game_window() {
     else
         echo "WARNING: Could not find game window after $attempts attempts"
         echo "Tried: direct PID, child processes, window name, wine class"
-        list_audio_sinks
         return 1
     fi
 }
 
-# Setup mute on focus loss using xdotool and appropriate audio tool
-# Supports both PulseAudio (pactl) and PipeWire (wpctl)
-setup_mute_on_focus_loss() {
-    local enabled="$1"
-    local game_pid="$2"
-    local game_name="$3"
-    
-    if [ "$enabled" != "1" ]; then
-        return 0
-    fi
-    
-    # Check if we have required tools
-    if ! command -v xdotool >/dev/null 2>&1; then
-        echo "WARNING: Mute on focus loss requires xdotool."
-        echo "Install with: sudo pacman -S xdotool"
-        return 1
-    fi
-    
-    local audio_system
-    audio_system=$(detect_audio_system)
-    
-    if [ "$audio_system" = "none" ]; then
-        echo "WARNING: No supported audio system found (need PipeWire or PulseAudio)"
-        list_audio_sinks
-        return 1
-    fi
-    
-    echo "Using audio system: $audio_system"
-    
-    # Find the game window using multiple strategies
-    local win_id
-    win_id=$(find_game_window "$game_pid" "$game_name" 30)
-    
-    if [ -z "$win_id" ]; then
-        echo "WARNING: Could not find game window for mute on focus loss"
-        echo "This might be because the game is running in a nested process tree."
-        echo "Try: WINEESYNC=1 proton-launcher /path/to/game.exe"
-        return 1
-    fi
-    
-    echo "Mute on focus loss monitoring window: $win_id (PID: $game_pid)"
-    
-    # Get the sink - for PipeWire use @DEFAULT_AUDIO_SINK@
-    local current_sink
-    current_sink=$(get_audio_sink)
-    
-    if [ -z "$current_sink" ]; then
-        echo "WARNING: Could not determine audio sink"
-        current_sink="@DEFAULT_AUDIO_SINK@"
-        echo "Fallback: Using @DEFAULT_AUDIO_SINK@"
-    fi
-    
-    echo "Using audio sink: $current_sink"
-    
-    # Initial state: unmuted
-    set_audio_mute 0 "$current_sink"
-    
-    # Monitor focus changes in background
-    (
-        local last_focus=""
-        local current_focus
-        
-        while kill -0 "$game_pid" 2>/dev/null; do
-            current_focus=$(xdotool getwindowfocus 2>/dev/null)
-            
-            if [ "$current_focus" = "$win_id" ]; then
-                # Game has focus - unmute
-                if [ "$last_focus" != "$current_focus" ]; then
-                    set_audio_mute 0 "$current_sink"
-                    last_focus="$current_focus"
-                    echo "[Mute Monitor] Game focused - audio UNMUTED"
-                fi
-            else
-                # Game lost focus - mute
-                if [ "$last_focus" != "$current_focus" ]; then
-                    set_audio_mute 1 "$current_sink"
-                    last_focus="$current_focus"
-                    echo "[Mute Monitor] Game unfocused - audio MUTED"
-                fi
-            fi
-            
-            sleep 0.3
-        done
-        
-        # Cleanup: ensure audio is unmuted when game exits
-        set_audio_mute 0 "$current_sink"
-        echo "[Mute Monitor] Game exited - audio UNMUTED"
-    ) &
-    
-    MUTE_MONITOR_PID=$!
-    echo "Mute on focus loss monitor started (PID: $MUTE_MONITOR_PID)"
-}
 
 # Apply window settings based on mode
 apply_window_settings() {

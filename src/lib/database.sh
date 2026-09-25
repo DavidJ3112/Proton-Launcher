@@ -53,7 +53,6 @@ CREATE TABLE IF NOT EXISTS games (
     is_32bit              INTEGER NOT NULL DEFAULT 0,
     last_path             TEXT,
     last_launched         TEXT,
-    mute_on_focus_loss    INTEGER NOT NULL DEFAULT 0,
     window_width          INTEGER,
     window_height         INTEGER,
     window_mode           TEXT NOT NULL DEFAULT 'default'
@@ -122,10 +121,9 @@ EOF
         from_version=1
     fi
     
-    # Version 1 to 2: Add mute_on_focus_loss and window settings
+    # Version 1 to 2: Add window settings
     if [ "$from_version" -eq 1 ]; then
         sqlite3 "$db_path" <<'EOF'
-ALTER TABLE games ADD COLUMN mute_on_focus_loss INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE games ADD COLUMN window_width INTEGER;
 ALTER TABLE games ADD COLUMN window_height INTEGER;
 ALTER TABLE games ADD COLUMN window_scaling INTEGER NOT NULL DEFAULT 0;
