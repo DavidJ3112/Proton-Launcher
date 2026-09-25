@@ -187,6 +187,62 @@ get_cheat_engine_exe() {
     fi
 }
 
+# Setup mute on focus loss using xdotool and pactl
+setup_mute_on_focus_loss() {
+    local enabled="$1"
+    local game_pid="$2"
+    
+    if [ "$enabled" != "1" ]; then
+        return 0
+    fi
+    
+    # Check if we have required tools
+    if ! command -v xdotool >/dev/null 2>&1 || ! command -v pactl >/dev/null 2>&1; then
+        echo "WARNING: Mute on focus loss requires xdotool and pactl. Install with: sudo apt install xdotool pulseaudio-utils"
+        return 1
+    fi
+    
+    # Get the game window ID
+    local win_id
+    win_id=$(xdotool search --pid "$game_pid" --class "wine" 2>/dev/null | head -n1)
+    
+    if [ -z "$win_id" ]; then
+        # Try to find by name
+        win_id=$(xdotool search --pid "$game_pid" --name "$AUTO_NAME" 2>/dev/null | head -n1)
+    fi
+    
+    if [ -z "$win_id" ]; then
+        echo "WARNING: Could not find game window for mute on focus loss"
+        return 1
+    fi
+    
+    echo "Mute on focus loss monitoring window: $win_id"
+    
+    # Monitor focus changes in background
+    (
+        local current_sink
+        current_sink=$(pactl get default-sink)
+        
+        while kill -0 "$game_pid" 2>/dev/null; do
+            local active_win
+            active_win=$(xdotool getwindowfocus 2>/dev/null)
+            
+            if [ "$active_win" = "$win_id" ]; then
+                # Game has focus - unmute
+                pactl set-sink-mute "$current_sink" 0 2>/dev/null
+            else
+                # Game lost focus - mute
+                pactl set-sink-mute "$current_sink" 1 2>/dev/null
+            fi
+            
+            sleep 0.5
+        done
+    ) &
+    
+    MUTE_MONITOR_PID=$!
+    echo "Mute on focus loss monitor started (PID: $MUTE_MONITOR_PID)"
+}
+
 # Apply window settings based on mode
 apply_window_settings() {
     local width="$1"
@@ -199,21 +255,27 @@ apply_window_settings() {
     
     case "$mode" in
         "fixed")
-            # Fixed window size with scaling
+            # Fixed window size - use virtual desktop
             if [ -n "$width" ] && [ -n "$height" ]; then
                 export WINE_DESKTOP="${width}x${height}"
                 export WINE_DPI_SCALING="1"
                 echo "Window settings: Fixed ${width}x${height} with scaling"
+            else
+                # No resolution set, use default
+                echo "Window settings: Fixed mode (no resolution set, using default)"
             fi
             ;;
         "fullscreen")
-            # Force fullscreen - no virtual desktop, let game handle fullscreen
+            # Force fullscreen - no virtual desktop, game handles fullscreen
+            # Use WINE_FULLSCREEN to hint to Wine
+            export WINE_FULLSCREEN=1
             unset WINE_DESKTOP
             unset WINE_DPI_SCALING
-            echo "Window settings: Fullscreen mode (game handles fullscreen)"
+            echo "Window settings: Fullscreen mode"
             ;;
         "maximized")
             # Force maximized window
+            # Use xdotool to maximize after launch
             unset WINE_DESKTOP
             unset WINE_DPI_SCALING
             echo "Window settings: Maximized mode"
@@ -222,12 +284,51 @@ apply_window_settings() {
             # Resizable window - no virtual desktop, behaves like normal window
             unset WINE_DESKTOP
             unset WINE_DPI_SCALING
-            echo "Window settings: Resizable mode (normal KDE window)"
+            unset WINE_FULLSCREEN
+            echo "Window settings: Resizable mode (normal window)"
             ;;
         *)
             # Default: resizable
             unset WINE_DESKTOP
             unset WINE_DPI_SCALING
+            unset WINE_FULLSCREEN
+            ;;
+    esac
+}
+
+# Apply window mode after game launch (for maximized mode)
+apply_window_mode_post_launch() {
+    local mode="$1"
+    local game_pid="$2"
+    
+    case "$mode" in
+        "maximized")
+            # Wait for window to appear, then maximize it
+            if command -v xdotool >/dev/null 2>&1; then
+                (
+                    sleep 3
+                    local win_id
+                    win_id=$(xdotool search --pid "$game_pid" 2>/dev/null | head -n1)
+                    if [ -n "$win_id" ]; then
+                        xdotool windowstate "$win_id" maximize
+                        echo "Window maximized"
+                    fi
+                ) &
+            fi
+            ;;
+        "fullscreen")
+            # Try to force fullscreen
+            if command -v xdotool >/dev/null 2>&1; then
+                (
+                    sleep 3
+                    local win_id
+                    win_id=$(xdotool search --pid "$game_pid" 2>/dev/null | head -n1)
+                    if [ -n "$win_id" ]; then
+                        xdotool windowstate "$win_id" fullscreen
+                        echo "Window set to fullscreen"
+                    fi
+                ) &
+            fi
             ;;
     esac
 }

@@ -46,13 +46,6 @@ launch_game() {
     # Apply window settings based on mode
     apply_window_settings "$WINDOW_WIDTH" "$WINDOW_HEIGHT" "${WINDOW_MODE:-default}"
 
-    # Apply mute on focus loss
-    if [ "${MUTE_ON_FOCUS_LOSS:-0}" -eq 1 ]; then
-        export PULSE_PROP="media.role=game"
-        export PROTON_MUTE_ON_FOCUS_LOSS=1
-        echo "Mute on focus loss enabled"
-    fi
-
     echo "Launching game..."
     echo "  Game:     $AUTO_NAME"
     echo "  32-Bit:   $IS_32BIT"
@@ -75,11 +68,24 @@ launch_game() {
     # Register running game
     register_running_game "$marker_id" "$game_path" "$PID"
 
+    # Apply post-launch window mode (maximized, fullscreen)
+    apply_window_mode_post_launch "${WINDOW_MODE:-default}" "$PID"
+
+    # Setup mute on focus loss monitoring
+    if [ "${MUTE_ON_FOCUS_LOSS:-0}" = "1" ]; then
+        setup_mute_on_focus_loss "1" "$PID"
+    fi
+
     # Launch extensions if enabled
     launch_enabled_extensions "$marker_id"
 
     wait "$PID"
     local exit_code=$?
+
+    # Clean up mute monitor if it exists
+    if [ -n "$MUTE_MONITOR_PID" ] && kill -0 "$MUTE_MONITOR_PID" 2>/dev/null; then
+        kill "$MUTE_MONITOR_PID" 2>/dev/null
+    fi
 
     # Clean up running game entry
     sqlite3 "$DB" "DELETE FROM running_games WHERE marker_id = '$(sql_escape "$marker_id")';"
