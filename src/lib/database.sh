@@ -2,7 +2,7 @@
 # Database Manager for Proton Launcher
 # Implements versioned database schema
 
-DB_VERSION=3
+DB_VERSION=4
 
 # Initialize database with versioning
 init_database() {
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS games (
     mute_on_focus_loss    INTEGER NOT NULL DEFAULT 0,
     window_width          INTEGER,
     window_height         INTEGER,
-    window_scaling        INTEGER NOT NULL DEFAULT 0
+    window_mode           TEXT NOT NULL DEFAULT 'default'
 );
 
 -- Running games table
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS game_extensions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     marker_id   TEXT NOT NULL,
     extension_name TEXT NOT NULL,
-    enabled     INTEGER NOT NULL DEFAULT 1,
+    enabled     INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (marker_id) REFERENCES games(marker_id)
 );
 EOF
@@ -104,42 +104,67 @@ upgrade_database() {
     cp "$db_path" "$backup_path"
     echo "Backup created at $backup_path"
     
-    # Version 1 to 2: Add game_extensions table
-    if [ "$from_version" -eq 1 ]; then
+    # Version 0 to 1: Add game_extensions table (old game-launcher databases)
+    if [ "$from_version" -eq 0 ]; then
         sqlite3 "$db_path" <<'EOF'
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO meta (key, value) VALUES ('version', '1');
+
 ALTER TABLE games ADD COLUMN is_32bit INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS game_extensions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    marker_id   TEXT NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    marker_id TEXT NOT NULL,
     extension_name TEXT NOT NULL,
-    enabled     INTEGER NOT NULL DEFAULT 1,
-    FOREIGN KEY (marker_id) REFERENCES games(marker_id)
+    enabled INTEGER NOT NULL DEFAULT 1
 );
 EOF
-        
-        # Update version
-        sqlite3 "$db_path" "UPDATE meta SET value='2' WHERE key='version';"
-        
-        from_version=2
+        from_version=1
     fi
     
-    # Version 2 to 3: Add mute_on_focus_loss and window settings
-    if [ "$from_version" -eq 2 ]; then
+    # Version 1 to 2: Add mute_on_focus_loss and window settings
+    if [ "$from_version" -eq 1 ]; then
         sqlite3 "$db_path" <<'EOF'
 ALTER TABLE games ADD COLUMN mute_on_focus_loss INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE games ADD COLUMN window_width INTEGER;
 ALTER TABLE games ADD COLUMN window_height INTEGER;
 ALTER TABLE games ADD COLUMN window_scaling INTEGER NOT NULL DEFAULT 0;
 EOF
-        
-        # Update version
+        sqlite3 "$db_path" "UPDATE meta SET value='2' WHERE key='version';"
+        from_version=2
+    fi
+    
+    # Version 2 to 3: Add window_mode, remove window_scaling
+    if [ "$from_version" -eq 2 ]; then
+        sqlite3 "$db_path" <<'EOF'
+ALTER TABLE games ADD COLUMN window_mode TEXT NOT NULL DEFAULT 'default';
+EOF
+        # Migrate old window_scaling to window_mode
+        sqlite3 "$db_path" <<'EOF'
+UPDATE games SET window_mode = 
+    CASE 
+        WHEN window_scaling = 1 AND window_width IS NOT NULL AND window_height IS NOT NULL 
+        THEN 'fixed'
+        ELSE 'default'
+    END;
+EOF
         sqlite3 "$db_path" "UPDATE meta SET value='3' WHERE key='version';"
-        
         from_version=3
     fi
     
-    # Add more upgrades here for future versions
+    # Version 3 to 4: Set default extension enabled to 0, add window_mode if missing
+    if [ "$from_version" -eq 3 ]; then
+        sqlite3 "$db_path" <<'EOF'
+ALTER TABLE games ADD COLUMN window_mode TEXT NOT NULL DEFAULT 'default';
+UPDATE game_extensions SET enabled = 0 WHERE enabled = 1;
+EOF
+        # Ensure all games have window_mode
+        sqlite3 "$db_path" <<'EOF'
+UPDATE games SET window_mode = 'default' WHERE window_mode IS NULL;
+EOF
+        sqlite3 "$db_path" "UPDATE meta SET value='4' WHERE key='version';"
+        from_version=4
+    fi
     
     echo "Database upgraded to version $DB_VERSION"
 }

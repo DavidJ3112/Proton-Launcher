@@ -2,79 +2,55 @@
 # UI Module for Proton Launcher
 # Handles user interface interactions
 
-# Pick window scaling mode
-pick_window_scaling() {
-    local current_scaling="${WINDOW_SCALING:-0}"
+# Pick window mode
+pick_window_mode() {
+    local current_mode="${WINDOW_MODE:-default}"
     local current_width="${WINDOW_WIDTH:-}"
     local current_height="${WINDOW_HEIGHT:-}"
     
-    local scaling_label
-    if [ "$current_scaling" -eq 1 ]; then
-        scaling_label="Enabled (${current_width}x${current_height})"
-    else
-        scaling_label="Disabled (${current_width:-auto}x${current_height:-auto})"
-    fi
+    local mode_label
+    case "$current_mode" in
+        "default") mode_label="Default (Resizable KDE window)" ;;
+        "fixed") mode_label="Fixed (${current_width}x${current_height})" ;;
+        "fullscreen") mode_label="Force Fullscreen" ;;
+        "maximized") mode_label="Force Maximized" ;;
+        *) mode_label="Default (Resizable KDE window)" ;;
+    esac
     
     local pick
-    pick="$(printf '%s\n' "Toggle Scaling" "Set Custom Resolution" "Clear Resolution" | \
-        rofi -dmenu -i -p "Window Scaling: $scaling_label")"
+    pick="$(printf '%s\n' "Default (Resizable)" "Fixed Resolution" "Force Fullscreen" "Force Maximized" | \
+        rofi -dmenu -i -p "Window Mode: $mode_label")"
     
     case "$pick" in
-        "Toggle Scaling")
-            if [ "$current_scaling" -eq 1 ]; then
-                WINDOW_SCALING=0
-            else
-                WINDOW_SCALING=1
-                # Set default resolution if not set
-                if [ -z "$current_width" ] || [ -z "$current_height" ]; then
-                    WINDOW_WIDTH=1280
-                    WINDOW_HEIGHT=720
-                fi
-            fi
+        "Default (Resizable)")
+            WINDOW_MODE="default"
             ;;
-        "Set Custom Resolution")
+        "Fixed Resolution")
+            WINDOW_MODE="fixed"
+            # Open resolution picker
             local width height
-            width="$(rofi -dmenu -p "Width (e.g., 1280, 1920, 480)" -filter "${current_width:-1280}")"
+            width="$(rofi -dmenu -p "Width (e.g., 480, 1280, 1920)" -filter "${current_width:-480}")"
             [ -z "$width" ] && return
-            height="$(rofi -dmenu -p "Height (e.g., 720, 1080, 270)" -filter "${current_height:-720}")"
+            height="$(rofi -dmenu -p "Height (e.g., 270, 720, 1080)" -filter "${current_height:-270}")"
             [ -z "$height" ] && return
             
             # Validate numeric input
             if [[ "$width" =~ ^[0-9]+$ ]] && [[ "$height" =~ ^[0-9]+$ ]]; then
                 WINDOW_WIDTH="$width"
                 WINDOW_HEIGHT="$height"
-                WINDOW_SCALING=1
             else
                 if command -v rofi >/dev/null 2>&1; then
                     rofi -e "Invalid resolution. Please enter numbers only."
                 fi
             fi
             ;;
-        "Clear Resolution")
-            WINDOW_WIDTH=""
-            WINDOW_HEIGHT=""
-            WINDOW_SCALING=0
+        "Force Fullscreen")
+            WINDOW_MODE="fullscreen"
+            ;;
+        "Force Maximized")
+            WINDOW_MODE="maximized"
             ;;
     esac
-}
-
-# Pick mute on focus loss setting
-pick_mute_on_focus_loss() {
-    local current="${MUTE_ON_FOCUS_LOSS:-0}"
-    local label
-    if [ "$current" -eq 1 ]; then
-        label="Enabled"
-    else
-        label="Disabled"
-    fi
-    
-    local pick
-    pick="$(printf '%s\n' "Toggle Mute on Focus Loss" | \
-        rofi -dmenu -i -p "Mute on Focus Loss: $label")"
-    
-    if [ "$pick" = "Toggle Mute on Focus Loss" ]; then
-        MUTE_ON_FOCUS_LOSS=$([ "$current" = "1" ] && echo 0 || echo 1)
-    fi
 }
 
 # Show launch confirmation or settings menu
@@ -93,15 +69,19 @@ show_launch_or_settings() {
 
         # Build window settings display
         local window_line
-        if [ -n "$WINDOW_WIDTH" ] && [ -n "$WINDOW_HEIGHT" ]; then
-            if [ "$WINDOW_SCALING" -eq 1 ]; then
-                window_line="Window: ${WINDOW_WIDTH}x${WINDOW_HEIGHT} (scaled)"
-            else
-                window_line="Window: ${WINDOW_WIDTH}x${WINDOW_HEIGHT} (fixed)"
-            fi
-        else
-            window_line="Window: Default"
-        fi
+        case "${WINDOW_MODE:-default}" in
+            "default") window_line="Window: Default (Resizable)" ;;
+            "fixed") 
+                if [ -n "$WINDOW_WIDTH" ] && [ -n "$WINDOW_HEIGHT" ]; then
+                    window_line="Window: Fixed ${WINDOW_WIDTH}x${WINDOW_HEIGHT}"
+                else
+                    window_line="Window: Fixed (set resolution)"
+                fi
+                ;;
+            "fullscreen") window_line="Window: Force Fullscreen" ;;
+            "maximized") window_line="Window: Force Maximized" ;;
+            *) window_line="Window: Default (Resizable)" ;;
+        esac
 
         menu_lines=(
             "\u25b6 Launch"
@@ -155,23 +135,16 @@ show_launch_or_settings() {
                 pick_prefix_mode
                 ;;
             "Window:"*)
-                pick_window_scaling
+                pick_window_mode
                 ;;
             "Mute on Focus Loss:"*)
-                pick_mute_on_focus_loss
+                MUTE_ON_FOCUS_LOSS=$([ "${MUTE_ON_FOCUS_LOSS:-0}" = "1" ] && echo 0 || echo 1)
                 ;;
             "Cheat Engine autoboot:"*)
                 CE_AUTOBOOT=$([ "$CE_AUTOBOOT" = "1" ] && echo 0 || echo 1)
                 ;;
             "MangoHud:"*)
                 MANGOHUD=$([ "$MANGOHUD" = "1" ] && echo 0 || echo 1)
-                ;;
-            "Fix Proton list"*)
-                manage_missing_protons
-                ;;
-            "Cancel")
-                echo "Cancelled by user."
-                exit 0
                 ;;
             *)
                 # Check if it's an extension toggle
@@ -185,7 +158,19 @@ show_launch_or_settings() {
                 done
                 
                 if [ "$found" -eq 0 ]; then
-                    echo "Unknown option: $choice"
+                    # Check for other menu options
+                    case "$choice" in
+                        "Fix Proton list"*)
+                            manage_missing_protons
+                            ;;
+                        "Cancel")
+                            echo "Cancelled by user."
+                            exit 0
+                            ;;
+                        *)
+                            echo "Unknown option: $choice"
+                            ;;
+                    esac
                 fi
                 ;;
         esac

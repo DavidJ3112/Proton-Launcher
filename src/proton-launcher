@@ -2,7 +2,7 @@
 
 # Proton Launcher - Main Entry Point
 # A launcher for running Windows games with Proton
-# Supports custom extensions, configurable prefixes, window scaling, and more
+# Supports custom extensions, configurable prefixes, window modes, and more
 
 # Resolve true directory even when executed via symlink (/usr/local/bin)
 SOURCE="${BASH_SOURCE[0]}"
@@ -263,7 +263,7 @@ else
     MUTE_ON_FOCUS_LOSS=0
     WINDOW_WIDTH=""
     WINDOW_HEIGHT=""
-    WINDOW_SCALING=0
+    WINDOW_MODE="default"
 fi
 
 # Apply Flag Overrides
@@ -273,12 +273,14 @@ fi
 [ -n "$FLAG_CE" ] && CE_AUTOBOOT="$FLAG_CE"
 [ -n "$FLAG_MUTE" ] && MUTE_ON_FOCUS_LOSS="$FLAG_MUTE"
 
-# Parse window flag (format: WxH or WxH:scaling)
+# Parse window flag (format: WxH or mode:WxH)
 if [ -n "$FLAG_WINDOW" ]; then
-    if [[ "$FLAG_WINDOW" =~ ^([0-9]+)x([0-9]+)(:([01]))?$ ]]; then
-        WINDOW_WIDTH="${BASH_REMATCH[1]}"
-        WINDOW_HEIGHT="${BASH_REMATCH[2]}"
-        WINDOW_SCALING="${BASH_REMATCH[4]:-1}"
+    if [[ "$FLAG_WINDOW" =~ ^([a-z]+):([0-9]+)x([0-9]+)$ ]]; then
+        WINDOW_MODE="${BASH_REMATCH[1]}"
+        WINDOW_WIDTH="${BASH_REMATCH[2]}"
+        WINDOW_HEIGHT="${BASH_REMATCH[3]}"
+    elif [[ "$FLAG_WINDOW" =~ ^([a-z]+)$ ]]; then
+        WINDOW_MODE="${BASH_REMATCH[1]}"
     fi
 fi
 

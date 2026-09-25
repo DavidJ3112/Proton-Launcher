@@ -43,25 +43,13 @@ launch_game() {
         export PROTON_FORCE_LARGE_ADDRESS_AWARE=1
     fi
 
-    # Apply window settings
-    if [ -n "$WINDOW_WIDTH" ] && [ -n "$WINDOW_HEIGHT" ]; then
-        export WINE_DESKTOP="${WINDOW_WIDTH}x${WINDOW_HEIGHT}"
-        if [ "$WINDOW_SCALING" -eq 1 ]; then
-            export WINE_DPI_SCALING="1"
-        else
-            export WINE_DPI_SCALING="0"
-        fi
-        echo "Window settings applied: ${WINDOW_WIDTH}x${WINDOW_HEIGHT}, scaling=$WINDOW_SCALING"
-    fi
+    # Apply window settings based on mode
+    apply_window_settings "$WINDOW_WIDTH" "$WINDOW_HEIGHT" "${WINDOW_MODE:-default}"
 
     # Apply mute on focus loss
     if [ "${MUTE_ON_FOCUS_LOSS:-0}" -eq 1 ]; then
         export PULSE_PROP="media.role=game"
-        # Use pulseaudio/pactl to mute on focus loss
-        if command -v pactl >/dev/null 2>&1; then
-            # This will be handled by the game process
-            export PROTON_MUTE_ON_FOCUS_LOSS=1
-        fi
+        export PROTON_MUTE_ON_FOCUS_LOSS=1
         echo "Mute on focus loss enabled"
     fi
 
@@ -70,6 +58,10 @@ launch_game() {
     echo "  32-Bit:   $IS_32BIT"
     echo "  Proton:   $SEL_PROTON_NAME"
     echo "  Prefix:   $PREFIX"
+    echo "  Window:   ${WINDOW_MODE:-default}"
+    if [ "${WINDOW_MODE:-default}" = "fixed" ] && [ -n "$WINDOW_WIDTH" ] && [ -n "$WINDOW_HEIGHT" ]; then
+        echo "  Resolution: ${WINDOW_WIDTH}x${WINDOW_HEIGHT}"
+    fi
     echo "  Game Log: $GAME_LOG"
 
     # Launch game
@@ -109,7 +101,7 @@ persist_game_config() {
     sqlite3 "$DB" "INSERT INTO games
         (marker_id, name, prefix_mode, manual_name, proton_name,
          cheat_engine_autoboot, mangohud, is_32bit, last_path, last_launched,
-         mute_on_focus_loss, window_width, window_height, window_scaling)
+         mute_on_focus_loss, window_width, window_height, window_mode)
         VALUES
         ('$(sql_escape "$marker_id")',
          '$(sql_escape "$AUTO_NAME")',
@@ -124,7 +116,7 @@ persist_game_config() {
          ${MUTE_ON_FOCUS_LOSS:-0},
          ${WINDOW_WIDTH:-NULL},
          ${WINDOW_HEIGHT:-NULL},
-         ${WINDOW_SCALING:-0})
+         '$(sql_escape "${WINDOW_MODE:-default}")')
         ON CONFLICT(marker_id) DO UPDATE SET
             name='$(sql_escape "$AUTO_NAME")',
             prefix_mode='$(sql_escape "$PREFIX_MODE")',
@@ -138,7 +130,7 @@ persist_game_config() {
             mute_on_focus_loss=${MUTE_ON_FOCUS_LOSS:-0},
             window_width=${WINDOW_WIDTH:-NULL},
             window_height=${WINDOW_HEIGHT:-NULL},
-            window_scaling=${WINDOW_SCALING:-0};"
+            window_mode='$(sql_escape "${WINDOW_MODE:-default}")';"
     
     # Save extensions
     save_game_extensions "$marker_id"
@@ -186,9 +178,11 @@ launch_enabled_extensions() {
         local enabled="${EXTENSIONS_ENABLED[$ext_name]:-0}"
         if [ "$enabled" -eq 1 ]; then
             local ext_path
-            if get_extension_path "$ext_name" >/dev/null; then
-                ext_path=$(get_extension_path "$ext_name")
+            # Try to get extension path - if it doesn't exist, skip silently
+            if ext_path=$(get_extension_path "$ext_name" 2>/dev/null); then
                 launch_extension "$ext_name" "$ext_path" "$marker_id"
+            else
+                echo "WARNING: Extension '$ext_name' not found, skipping"
             fi
         fi
     done
@@ -199,6 +193,12 @@ launch_extension() {
     local ext_name="$1"
     local ext_path="$2"
     local marker_id="$3"
+    
+    # Check if extension file exists
+    if [ ! -f "$ext_path" ]; then
+        echo "WARNING: Extension '$ext_name' path does not exist: $ext_path"
+        return 1
+    fi
     
     echo "Launching extension: $ext_name ($ext_path)"
     
@@ -331,9 +331,9 @@ handle_cheat_engine_mode() {
         local is_game_32bit
         is_game_32bit="$(sqlite3 "$DB" "SELECT is_32bit FROM games WHERE marker_id = '$(sql_escape "$R_MARKER")' LIMIT 1;")"
 
-        local ce_exec="$CE_BASE_DIR/Cheat Engine.exe"
-        if [ "$is_game_32bit" != "1" ] && [ -f "$CE_BASE_DIR/cheatengine-x86_64.exe" ]; then
-            ce_exec="$CE_BASE_DIR/cheatengine-x86_64.exe"
+        local ce_exec="$ce_base_dir/Cheat Engine.exe"
+        if [ "$is_game_32bit" != "1" ] && [ -f "$ce_base_dir/cheatengine-x86_64.exe" ]; then
+            ce_exec="$ce_base_dir/cheatengine-x86_64.exe"
         fi
 
         echo "Launching Cheat Engine executable: $ce_exec"
@@ -341,4 +341,45 @@ handle_cheat_engine_mode() {
         local exit_code=$?
         exit "$exit_code"
     fi
+}
+
+# Show extensions configuration menu
+show_extensions_menu() {
+    local menu_lines=("Back")
+    
+    # Add all available extensions
+    for ext in $AVAILABLE_EXTENSIONS; do
+        local ext_enabled="${EXTENSIONS_ENABLED[$ext]:-0}"
+        menu_lines+=("$ext: $([ "$ext_enabled" = "1" ] && echo On || echo Off)")
+    done
+    
+    while true; do
+        local choice
+        if command -v rofi >/dev/null 2>&1; then
+            choice="$(printf '%s\n' "${menu_lines[@]}" | rofi -dmenu -i -p "Extensions")"
+        else
+            echo "Extensions:"
+            for i in "${!menu_lines[@]}"; do
+                echo "  $((i+1)). ${menu_lines[$i]}"
+            done
+            read -r -p "Select option (number or name): " choice
+        fi
+        
+        [ -z "$choice" ] && return
+        
+        case "$choice" in
+            "Back")
+                return
+                ;;
+            *)
+                # Check if it's an extension toggle
+                for ext in $AVAILABLE_EXTENSIONS; do
+                    if [[ "$choice" == "$ext:"* ]]; then
+                        EXTENSIONS_ENABLED[$ext]=$([ "${EXTENSIONS_ENABLED[$ext]:-0}" = "1" ] && echo 0 || echo 1)
+                        break
+                    fi
+                done
+                ;;
+        esac
+    done
 }

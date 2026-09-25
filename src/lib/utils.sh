@@ -121,12 +121,11 @@ cleanup_stale_running() {
 
 # Load game configuration from database
 load_game_config() {
-    local marker="$1"
-    local row esc_marker
+    local marker="$1" row esc_marker
     esc_marker="$(sql_escape "$marker")"
     row="$(sqlite3 -separator '|' "$DB" \
         "SELECT prefix_mode, manual_name, proton_name, cheat_engine_autoboot, mangohud, \
-                mute_on_focus_loss, window_width, window_height, window_scaling
+                mute_on_focus_loss, window_width, window_height, window_mode
          FROM games WHERE marker_id = '$esc_marker' LIMIT 1;")"
 
     if [ -z "$row" ]; then
@@ -134,7 +133,7 @@ load_game_config() {
     fi
 
     IFS='|' read -r PREFIX_MODE MANUAL_NAME SEL_PROTON_NAME CE_AUTOBOOT MANGOHUD \
-         MUTE_ON_FOCUS_LOSS WINDOW_WIDTH WINDOW_HEIGHT WINDOW_SCALING <<< "$row"
+         MUTE_ON_FOCUS_LOSS WINDOW_WIDTH WINDOW_HEIGHT WINDOW_MODE <<< "$row"
 
     if [ -n "$SEL_PROTON_NAME" ]; then
         SEL_PROTON_PATH="$(sqlite3 "$DB" \
@@ -174,22 +173,6 @@ save_game_extensions() {
     done
 }
 
-# Get window geometry string for WINE
-get_window_geometry() {
-    local width="$1"
-    local height="$2"
-    local scaling="$3"
-    
-    if [ -n "$width" ] && [ -n "$height" ]; then
-        if [ "$scaling" -eq 1 ]; then
-            echo "${width}x${height}"
-        else
-            # For non-scaling, use virtual desktop
-            echo "${width}x${height}"
-        fi
-    fi
-}
-
 # Get Cheat Engine executable path
 get_cheat_engine_exe() {
     local ce_dir
@@ -204,37 +187,47 @@ get_cheat_engine_exe() {
     fi
 }
 
-# Get Cheat Engine executable path
-get_cheat_engine_exe() {
-    local ce_dir
-    ce_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
-
-    if [ "$(uname -m)" = "x86_64" ] && [ -f "$ce_dir/cheatengine-x86_64.exe" ]; then
-        echo "$ce_dir/cheatengine-x86_64.exe"
-    elif [ -f "$ce_dir/Cheat Engine.exe" ]; then
-        echo "$ce_dir/Cheat Engine.exe"
-    else
-        echo "${CHEAT_ENGINE:-}"
-    fi
-}
-
-# Apply window settings as environment variables
+# Apply window settings based on mode
 apply_window_settings() {
     local width="$1"
     local height="$2"
-    local scaling="$3"
+    local mode="$3"
     
-    if [ -n "$width" ] && [ -n "$height" ]; then
-        export WINE_DESKTOP="${width}x${height}"
-        
-        if [ "$scaling" -eq 1 ]; then
-            # Enable DPI scaling
-            export WINE_DPI_SCALING="1"
-        else
-            # Disable scaling, use exact resolution
-            export WINE_DPI_SCALING="0"
-        fi
-        
-        echo "Window settings applied: ${width}x${height}, scaling=$scaling"
-    fi
+    # Clear any existing window settings
+    unset WINE_DESKTOP
+    unset WINE_DPI_SCALING
+    
+    case "$mode" in
+        "fixed")
+            # Fixed window size with scaling
+            if [ -n "$width" ] && [ -n "$height" ]; then
+                export WINE_DESKTOP="${width}x${height}"
+                export WINE_DPI_SCALING="1"
+                echo "Window settings: Fixed ${width}x${height} with scaling"
+            fi
+            ;;
+        "fullscreen")
+            # Force fullscreen - no virtual desktop, let game handle fullscreen
+            unset WINE_DESKTOP
+            unset WINE_DPI_SCALING
+            echo "Window settings: Fullscreen mode (game handles fullscreen)"
+            ;;
+        "maximized")
+            # Force maximized window
+            unset WINE_DESKTOP
+            unset WINE_DPI_SCALING
+            echo "Window settings: Maximized mode"
+            ;;
+        "resizable"|"default")
+            # Resizable window - no virtual desktop, behaves like normal window
+            unset WINE_DESKTOP
+            unset WINE_DPI_SCALING
+            echo "Window settings: Resizable mode (normal KDE window)"
+            ;;
+        *)
+            # Default: resizable
+            unset WINE_DESKTOP
+            unset WINE_DPI_SCALING
+            ;;
+    esac
 }
