@@ -24,8 +24,9 @@ INSTALL_DIR="/opt/proton-launcher"
 BIN_LINK="/usr/local/bin/proton-launcher"
 DESKTOP_DIR="$USER_HOME/.local/share/applications"
 DESKTOP_FILE="$DESKTOP_DIR/proton-launcher.desktop"
-CE_DESKTOP_FILE="$DESKTOP_DIR/cheat-engine.desktop"
-GAME_LAUNCHER_DIR="$USER_HOME/.local/share/game-launcher"
+CE_DESKTOP_FILE="$DESKTOP_DIR/proton-launcher-ce.desktop"
+PROTON_LAUNCHER_DIR="$USER_HOME/.local/share/proton-launcher"
+CONFIG_DIR="$USER_HOME/.config/proton-launcher"
 
 echo "=========================================="
 echo "        Proton Launcher Uninstall"
@@ -72,12 +73,21 @@ fi
 echo
 echo "Cleaning launcher user data..."
 
-if [ -d "$GAME_LAUNCHER_DIR" ]; then
-    if confirm "Remove launcher database ($GAME_LAUNCHER_DIR)?"; then
-        rm -rf "$GAME_LAUNCHER_DIR"
+if [ -d "$PROTON_LAUNCHER_DIR" ]; then
+    if confirm "Remove launcher database ($PROTON_LAUNCHER_DIR)?"; then
+        rm -rf "$PROTON_LAUNCHER_DIR"
         echo "[OK] Removed database directory."
     else
-        echo "[SKIP] Kept $GAME_LAUNCHER_DIR"
+        echo "[SKIP] Kept $PROTON_LAUNCHER_DIR"
+    fi
+fi
+
+if [ -d "$CONFIG_DIR" ]; then
+    if confirm "Remove launcher config ($CONFIG_DIR)?"; then
+        rm -rf "$CONFIG_DIR"
+        echo "[OK] Removed config directory."
+    else
+        echo "[SKIP] Kept $CONFIG_DIR"
     fi
 fi
 

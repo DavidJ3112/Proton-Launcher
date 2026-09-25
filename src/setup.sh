@@ -19,7 +19,7 @@ INSTALL_DIR="/opt/proton-launcher"
 BIN_LINK="/usr/local/bin/proton-launcher"
 DESKTOP_DIR="$USER_HOME/.local/share/applications"
 DESKTOP_FILE="$DESKTOP_DIR/proton-launcher.desktop"
-CE_DESKTOP_FILE="$DESKTOP_DIR/cheat-engine.desktop"
+CE_DESKTOP_FILE="$DESKTOP_DIR/proton-launcher-ce.desktop"
 
 echo "=========================================="
 echo "        Proton Launcher Setup (/opt)"
@@ -49,7 +49,7 @@ ln -sf "$INSTALL_DIR/proton-launcher" "$BIN_LINK"
 echo "[OK] Created symlink at $BIN_LINK"
 
 # Ensure user runtime directories exist
-su - "$REAL_USER" -c "mkdir -p \"$USER_HOME/.local/share/game-launcher\" \"${PREFIX_ROOT:-$USER_HOME/Games/ProtonPrefixes}\" \"$DESKTOP_DIR\""
+su - "$REAL_USER" -c "mkdir -p \"$USER_HOME/.local/share/proton-launcher\" \"${PREFIX_ROOT:-$USER_HOME/Games/ProtonPrefixes}\" \"$DESKTOP_DIR\" \"$USER_HOME/.config/proton-launcher\""
 
 # Create Proton Launcher desktop entry
 cat > "$DESKTOP_FILE" <<EOF
@@ -70,7 +70,7 @@ chmod 644 "$DESKTOP_FILE"
 # Create Cheat Engine shortcut desktop entry
 cat > "$CE_DESKTOP_FILE" <<EOF
 [Desktop Entry]
-Name=Cheat Engine (Proton)
+Name=Proton Launcher - Cheat Engine
 Comment=Attach Cheat Engine to a running Proton game prefix
 Exec=$BIN_LINK "$CHEAT_ENGINE"
 Icon=utilities-terminal

@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# Proton Launcher - Main Entry Point
+# A launcher for running Windows games with Proton
+# Supports custom extensions, configurable prefixes, window scaling, and more
+
 # Resolve true directory even when executed via symlink (/usr/local/bin)
 SOURCE="${BASH_SOURCE[0]}"
 while [ -L "$SOURCE" ]; do
@@ -9,16 +13,45 @@ while [ -L "$SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
 
-# Load configuration
-CONFIG="$SCRIPT_DIR/config"
-if [ ! -f "$CONFIG" ]; then
-    echo "ERROR: Config file not found: $CONFIG"
-    exit 1
-fi
-source "$CONFIG"
+# Load libraries
+LIB_DIR="$SCRIPT_DIR/lib"
+MODULES_DIR="$SCRIPT_DIR/modules"
 
-# Ensure user-space log directories exist (separate logs vs gamelogs)
-mkdir -p "${LOG_DIR:-$HOME/.local/share/game-launcher/logs}" "${GAME_LOG_DIR:-$HOME/.local/share/game-launcher/gamelogs}"
+# Source all library files
+for lib_file in "$LIB_DIR"/*.sh; do
+    [ -f "$lib_file" ] && source "$lib_file"
+done
+
+# Source all module files
+for module_file in "$MODULES_DIR"/*.sh; do
+    [ -f "$module_file" ] && source "$module_file"
+done
+
+# --------------------------------------------------
+# Configuration Setup
+# --------------------------------------------------
+
+# Initialize config directory
+init_config_dir
+
+# Load configuration
+CONFIG_FILE="$CONFIG_DIR/config"
+EXTENSIONS_FILE="$CONFIG_DIR/extensions.conf"
+
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+fi
+
+# Override with environment variables if set
+DB="${DB:-$HOME/.local/share/proton-launcher/games.db}"
+LOG_DIR="${LOG_DIR:-$HOME/.local/share/proton-launcher/logs}"
+GAME_LOG_DIR="${GAME_LOG_DIR:-$HOME/.local/share/proton-launcher/gamelogs}"
+PREFIX_ROOT="${PREFIX_ROOT:-$HOME/Games/ProtonPrefixes}"
+PROTON_BASE="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
+STEAM_PROTON="${STEAM_PROTON:-$HOME/.local/share/Steam/steamapps/common}"
+
+# Ensure user-space log directories exist
+mkdir -p "$LOG_DIR" "$GAME_LOG_DIR"
 
 # Hide GStreamer ELFCLASS architecture mismatch warnings
 export GST_DEBUG=0
@@ -27,10 +60,11 @@ export G_MESSAGES_DEBUG=none
 set -u
 
 # --------------------------------------------------
-# Launcher / Proton Log Handling (Max 3 logs)
+# Logging Setup
 # --------------------------------------------------
-LOG="${LOG:-$HOME/.local/share/game-launcher/logs/game-launcher.log}"
+LOG="${LOG:-$LOG_DIR/proton-launcher.log}"
 
+# Rotate logs (keep max 3)
 if [ -f "$LOG.2" ]; then
     rm -f "$LOG.3" 2>/dev/null || true
     mv "$LOG.2" "$LOG.3" 2>/dev/null || true
@@ -48,13 +82,13 @@ fi
 exec > >(tee -a "$LOG") 2>&1
 
 echo "=================================="
-echo "Started: $(date)"
+echo "Proton Launcher - Started: $(date)"
 echo "Arguments: $*"
-echo "DataBase: ${DB:-$HOME/.local/share/game-launcher/games.db}"
+echo "Database: $DB"
 echo "=================================="
 
 # --------------------------------------------------
-# Data Base Setup
+# Database Initialization
 # --------------------------------------------------
 
 if ! command -v sqlite3 >/dev/null 2>&1; then
@@ -62,289 +96,8 @@ if ! command -v sqlite3 >/dev/null 2>&1; then
     exit 1
 fi
 
-mkdir -p "$(dirname "$DB")"
-
-sqlite3 "$DB" <<EOF
-CREATE TABLE IF NOT EXISTS games (
-    marker_id             TEXT PRIMARY KEY,
-    name                  TEXT NOT NULL,
-    prefix_mode           TEXT NOT NULL DEFAULT 'auto',
-    manual_name           TEXT,
-    proton_name           TEXT,
-    cheat_engine_autoboot INTEGER NOT NULL DEFAULT 0,
-    mangohud              INTEGER NOT NULL DEFAULT 1,
-    is_32bit              INTEGER NOT NULL DEFAULT 0,
-    last_path             TEXT,
-    last_launched         TEXT
-);
-
-CREATE TABLE IF NOT EXISTS running_games (
-    marker_id   TEXT PRIMARY KEY,
-    game_name   TEXT NOT NULL,
-    game_path   TEXT,
-    pid         INTEGER NOT NULL,
-    proton      TEXT NOT NULL,
-    proton_path TEXT NOT NULL,
-    prefix      TEXT NOT NULL,
-    started_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS protons (
-    name      TEXT PRIMARY KEY,
-    path      TEXT NOT NULL,
-    status    TEXT NOT NULL DEFAULT 'active',
-    last_seen TEXT
-);
-EOF
-
-# --------------------------------------------------
-# Helpers
-# --------------------------------------------------
-
-sql_escape() {
-    printf '%s' "${1//\'/\'\'}"
-}
-
-gen_uuid() {
-    if command -v uuidgen >/dev/null 2>&1; then
-        uuidgen
-    elif [ -r /proc/sys/kernel/random/uuid ]; then
-        cat /proc/sys/kernel/random/uuid
-    else
-        echo "$(date +%s%N)-$RANDOM"
-    fi
-}
-
-get_cheat_engine_exe() {
-    local ce_dir
-    ce_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
-
-    if [ "$(uname -m)" = "x86_64" ] && [ -f "$ce_dir/cheatengine-x86_64.exe" ]; then
-        echo "$ce_dir/cheatengine-x86_64.exe"
-    elif [ -f "$ce_dir/Cheat Engine.exe" ]; then
-        echo "$ce_dir/Cheat Engine.exe"
-    else
-        echo "${CHEAT_ENGINE:-}"
-    fi
-}
-
-check_32bit_warning() {
-    if [ -n "${GAME:-}" ] && [ -f "$GAME" ]; then
-        if file -b "$GAME" | grep -q "PE32 "; then
-            local game_basename
-            game_basename="$(basename "$GAME")"
-            echo "NOTICE: $game_basename is a 32-bit executable."
-            rofi -e "⚠️  32-Bit Game Detected: $game_basename
-
-Features enabled for stability:
-• WINEARCH forced to win32 mode.
-• PROTON_FORCE_LARGE_ADDRESS_AWARE enabled.
-• Auto-cleanup on close enabled to prevent hung wine processes."
-        fi
-    fi
-}
-
-get_marker_id() {
-    local game_dir="$1"
-    local marker="$game_dir/.proton-launcher-id"
-
-    if [ -f "$marker" ]; then
-        cat "$marker"
-        return
-    fi
-
-    local id
-    id="$(gen_uuid)"
-    if echo "$id" > "$marker" 2>/dev/null; then
-        echo "$id"
-    else
-        echo "WARNING: could not write marker file in $game_dir (read-only?)." >&2
-        echo "path:$game_dir"
-    fi
-}
-
-discover_protons() {
-    local now
-    now="$(date '+%Y-%m-%d %H:%M:%S')"
-
-    shopt -s nullglob
-    local dir name esc_name esc_path
-    for dir in "$PROTON_BASE"/*/ "$STEAM_PROTON"/*/; do
-        [ -d "$dir" ] || continue
-        dir="${dir%/}"
-        name="$(basename "$dir")"
-        case "$name" in
-            *[Pp]roton*) ;;
-            *) continue ;;
-        esac
-
-        esc_name="$(sql_escape "$name")"
-        esc_path="$(sql_escape "$dir")"
-        sqlite3 "$DB" "INSERT INTO protons (name, path, status, last_seen)
-            VALUES ('$esc_name', '$esc_path', 'active', '$now')
-            ON CONFLICT(name) DO UPDATE SET
-                path='$esc_path', status='active', last_seen='$now';"
-    done
-    shopt -u nullglob
-
-    local rows path
-    rows="$(sqlite3 -separator '|' "$DB" "SELECT name, path FROM protons;")"
-    while IFS='|' read -r name path; do
-        [ -z "$name" ] && continue
-        if [ ! -d "$path" ]; then
-            esc_name="$(sql_escape "$name")"
-            sqlite3 "$DB" "UPDATE protons SET status='missing' WHERE name = '$esc_name';"
-        fi
-    done <<< "$rows"
-}
-
-get_active_protons() {
-    sqlite3 -separator '|' "$DB" "SELECT name, path FROM protons WHERE status='active' ORDER BY name;"
-}
-
-get_missing_protons() {
-    sqlite3 -separator '|' "$DB" "SELECT name, path FROM protons WHERE status='missing' ORDER BY name;"
-}
-
-manage_missing_protons() {
-    local missing names selected name esc_name
-    missing="$(get_missing_protons)"
-    [ -z "$missing" ] && return
-
-    names="$(printf '%s\n' "$missing" | cut -d'|' -f1)"
-
-    selected="$(printf '%s\n' "$names" | rofi -dmenu -multi-select -i \
-        -p "Remove missing Proton(s) (Shift+Enter to pick several)")"
-
-    [ -z "$selected" ] && return
-
-    while IFS= read -r name; do
-        [ -z "$name" ] && continue
-        esc_name="$(sql_escape "$name")"
-        sqlite3 "$DB" "DELETE FROM protons WHERE name = '$esc_name';"
-        echo "Removed missing Proton entry: $name"
-    done <<< "$selected"
-}
-
-cleanup_stale_running() {
-    local rows marker pid esc_marker
-    rows="$(sqlite3 -separator '|' "$DB" "SELECT marker_id, pid FROM running_games;")"
-    while IFS='|' read -r marker pid; do
-        [ -z "$marker" ] && continue
-        if ! kill -0 "$pid" 2>/dev/null; then
-            esc_marker="$(sql_escape "$marker")"
-            sqlite3 "$DB" "DELETE FROM running_games WHERE marker_id = '$esc_marker';"
-        fi
-    done <<< "$rows"
-}
-
-load_game_config() {
-    local marker="$1" row esc_marker
-    esc_marker="$(sql_escape "$marker")"
-    row="$(sqlite3 -separator '|' "$DB" \
-        "SELECT prefix_mode, manual_name, proton_name, cheat_engine_autoboot, mangohud
-         FROM games WHERE marker_id = '$esc_marker' LIMIT 1;")"
-
-    if [ -z "$row" ]; then
-        return 1
-    fi
-
-    IFS='|' read -r PREFIX_MODE MANUAL_NAME SEL_PROTON_NAME CE_AUTOBOOT MANGOHUD <<< "$row"
-
-    if [ -n "$SEL_PROTON_NAME" ]; then
-        SEL_PROTON_PATH="$(sqlite3 "$DB" \
-            "SELECT path FROM protons WHERE name = '$(sql_escape "$SEL_PROTON_NAME")' LIMIT 1;")"
-    else
-        SEL_PROTON_PATH=""
-    fi
-
-    return 0
-}
-
-pick_proton() {
-    local list names pick path
-    list="$(get_active_protons)"
-    if [ -z "$list" ]; then
-        rofi -e "No Proton installations found under:
-$PROTON_BASE
-$STEAM_PROTON"
-        return
-    fi
-
-    names="$(printf '%s\n' "$list" | cut -d'|' -f1)"
-    pick="$(printf '%s\n' "$names" | rofi -dmenu -i -p "Proton")"
-    [ -z "$pick" ] && return
-
-    path="$(printf '%s\n' "$list" | awk -F'|' -v n="$pick" '$1==n{print $2; exit}')"
-    SEL_PROTON_NAME="$pick"
-    SEL_PROTON_PATH="$path"
-}
-
-pick_prefix_mode() {
-    local pick entered
-    pick="$(printf '%s\n' "Auto ($AUTO_NAME)" "Directory ($DIR_NAME)" "Manual" | \
-        rofi -dmenu -i -p "Prefix mode")"
-
-    case "$pick" in
-        Auto*) PREFIX_MODE="auto" ;;
-        Directory*) PREFIX_MODE="directory" ;;
-        Manual*)
-            entered="$(rofi -dmenu -p "Prefix name" -filter "${MANUAL_NAME:-$AUTO_NAME}")"
-            [ -n "$entered" ] && MANUAL_NAME="$entered"
-            PREFIX_MODE="manual"
-            ;;
-    esac
-}
-
-run_settings_menu() {
-    check_32bit_warning
-
-    local missing_count menu_lines choice mode_line
-
-    while true; do
-        missing_count="$(sqlite3 "$DB" "SELECT COUNT(*) FROM protons WHERE status='missing';")"
-
-        case "$PREFIX_MODE" in
-            auto)      mode_line="Prefix mode: Auto ($AUTO_NAME)" ;;
-            directory) mode_line="Prefix mode: Directory ($DIR_NAME)" ;;
-            manual)    mode_line="Prefix mode: Manual (${MANUAL_NAME:-not set})" ;;
-            *)         mode_line="Prefix mode: Auto ($AUTO_NAME)" ;;
-        esac
-
-        menu_lines=(
-            "▶ Launch"
-            "Proton: ${SEL_PROTON_NAME:-[none selected]}"
-            "$mode_line"
-            "Cheat Engine autoboot: $([ "$CE_AUTOBOOT" = "1" ] && echo On || echo Off)"
-            "MangoHud: $([ "$MANGOHUD" = "1" ] && echo On || echo Off)"
-        )
-        if [ "${missing_count:-0}" -gt 0 ]; then
-            menu_lines+=("Fix Proton list ($missing_count missing)")
-        fi
-        menu_lines+=("Cancel")
-
-        choice="$(printf '%s\n' "${menu_lines[@]}" | rofi -dmenu -i -p "$GAME_NAME_DISPLAY")"
-
-        case "$choice" in
-            "▶ Launch")
-                if [ -z "$SEL_PROTON_NAME" ]; then
-                    rofi -e "Select a Proton version first."
-                    continue
-                fi
-                return 0
-                ;;
-            "Proton:"*) pick_proton ;;
-            "Prefix mode:"*) pick_prefix_mode ;;
-            "Cheat Engine autoboot:"*) CE_AUTOBOOT=$([ "$CE_AUTOBOOT" = "1" ] && echo 0 || echo 1) ;;
-            "MangoHud:"*) MANGOHUD=$([ "$MANGOHUD" = "1" ] && echo 0 || echo 1) ;;
-            "Fix Proton list"*) manage_missing_protons ;;
-            "Cancel"|"")
-                echo "Cancelled by user."
-                exit 0
-                ;;
-        esac
-    done
-}
+# Initialize database with versioning
+init_database
 
 # --------------------------------------------------
 # CLI Argument & Flag Parsing
@@ -356,11 +109,18 @@ FLAG_PROTON=""
 FLAG_PREFIX_MODE=""
 FLAG_MANGO=""
 FLAG_CE=""
+CONFIG_MODE=0
+FLAG_MUTE=""
+FLAG_WINDOW=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --configure)
+        --configure|--config)
             CONFIGURE=1
+            shift
+            ;;
+        --config-mode)
+            CONFIG_MODE=1
             shift
             ;;
         --proton)
@@ -379,6 +139,14 @@ while [[ $# -gt 0 ]]; do
             FLAG_CE="$2"
             shift 2
             ;;
+        --mute)
+            FLAG_MUTE="$2"
+            shift 2
+            ;;
+        --window)
+            FLAG_WINDOW="$2"
+            shift 2
+            ;;
         *)
             GAME="$1"
             shift
@@ -386,6 +154,44 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Handle config mode
+if [ "$CONFIG_MODE" -eq 1 ]; then
+    echo "Config mode activated. Editing configuration files..."
+    edit_config
+    exit 0
+fi
+
+# Load extensions from config
+AVAILABLE_EXTENSIONS=""
+if [ -f "$EXTENSIONS_FILE" ]; then
+    while IFS='=' read -r ext_name ext_path; do
+        # Skip comments and empty lines
+        [[ "$ext_name" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "$ext_name" ]] && continue
+        
+        # Clean up the name
+        ext_name=$(echo "$ext_name" | xargs)
+        
+        if [ -n "$ext_name" ]; then
+            AVAILABLE_EXTENSIONS="$AVAILABLE_EXTENSIONS $ext_name"
+            # Initialize extension as disabled by default
+            EXTENSIONS_ENABLED[$ext_name]=0
+        fi
+    done < "$EXTENSIONS_FILE"
+fi
+
+# Also check for CHEAT_ENGINE in main config
+if [ -n "${CHEAT_ENGINE:-}" ]; then
+    AVAILABLE_EXTENSIONS="$AVAILABLE_EXTENSIONS CHEAT_ENGINE"
+    EXTENSIONS_ENABLED[CHEAT_ENGINE]=0
+fi
+
+# Set CHEAT_ENGINE if not already set
+if [ -z "${CHEAT_ENGINE:-}" ]; then
+    CHEAT_ENGINE="$HOME/Cheat Engine/Cheat Engine.exe"
+fi
+
+# Get the actual Cheat Engine executable path
 TARGET_CE="$(get_cheat_engine_exe)"
 if [ -z "$TARGET_CE" ] || [ ! -f "$TARGET_CE" ]; then
     echo "WARNING: Cheat Engine not found at ${TARGET_CE:-not configured}"
@@ -396,101 +202,26 @@ fi
 cleanup_stale_running
 
 # --------------------------------------------------
-# Previously Ran Games Library Selection
+# Game Selection
 # --------------------------------------------------
 
 if [ -z "$GAME" ]; then
-    echo "No executable specified. Fetching previously run games..."
-
-    SAVED_GAMES="$(sqlite3 -separator '|' "$DB" \
-        "SELECT last_path FROM games WHERE last_path IS NOT NULL AND last_path != '' GROUP BY last_path ORDER BY last_launched DESC;")"
-
-    if [ -z "$SAVED_GAMES" ]; then
-        rofi -e "No previously played games found in database."
-        exit 0
-    fi
-
-    # Format output for Rofi: "[Folder Name] Executable.exe"
-    FORMATTED_LIST=""
-    while IFS= read -r path; do
-        [ -z "$path" ] && continue
-        folder="$(basename "$(dirname "$path")")"
-        exe="$(basename "$path")"
-        FORMATTED_LIST="${FORMATTED_LIST}[$folder] $exe|$path\n"
-    done <<< "$SAVED_GAMES"
-
-    SELECTED_DISPLAY="$(printf "%b" "$FORMATTED_LIST" | cut -d'|' -f1 | rofi -dmenu -i -p "Select Game")"
-
-    if [ -z "$SELECTED_DISPLAY" ]; then
-        exit 0
-    fi
-
-    GAME="$(printf "%b" "$FORMATTED_LIST" | grep "^${SELECTED_DISPLAY}|" | cut -d'|' -f2 | head -n1)"
+    select_game
 fi
 
 if [ ! -f "$GAME" ]; then
     echo "ERROR: Executable file not found: $GAME"
-    rofi -e "Executable file not found:
-$GAME"
+    display_error "Executable file not found:\n$GAME"
     exit 1
 fi
 
 GAME="$(realpath "$GAME")"
 
 # --------------------------------------------------
-# Cheat Engine Standalone Mode
+# Cheat Engine Standalone Mode (Legacy Support)
 # --------------------------------------------------
 
-CE_BASE_DIR="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
-if [ -n "${CHEAT_ENGINE:-}" ] && { [ "$GAME" = "$CHEAT_ENGINE" ] || [ "$GAME" = "$CE_BASE_DIR/Cheat Engine.exe" ] || [ "$GAME" = "$CE_BASE_DIR/cheatengine-x86_64.exe" ]; }; then
-    echo "Cheat Engine execution mode requested."
-
-    RUNNING="$(sqlite3 -separator '|' "$DB" \
-        "SELECT marker_id, game_name, prefix, proton, proton_path, game_path
-         FROM running_games
-         ORDER BY started_at DESC;")"
-
-    if [ -z "$RUNNING" ]; then
-        rofi -e "No games are currently running to attach Cheat Engine to."
-        exit 0
-    fi
-
-    # Format running games list in rofi as "[Folder Name] Executable"
-    CE_LIST=""
-    while IFS='|' read -r r_marker r_name r_prefix r_proton r_p_path r_gpath; do
-        [ -z "$r_marker" ] && continue
-        r_folder="$(basename "$(dirname "$r_gpath")")"
-        r_exe="$(basename "$r_gpath")"
-        CE_LIST="${CE_LIST}[$r_folder] $r_exe|$r_marker\n"
-    done <<< "$RUNNING"
-
-    PICK_DISPLAY="$(printf "%b" "$CE_LIST" | cut -d'|' -f1 | rofi -dmenu -i -p "Attach Cheat Engine to")"
-
-    if [ -z "$PICK_DISPLAY" ]; then
-        exit 0
-    fi
-
-    SELECTED_MARKER="$(printf "%b" "$CE_LIST" | grep "^${PICK_DISPLAY}|" | cut -d'|' -f2 | head -n1)"
-    ROW="$(printf '%s\n' "$RUNNING" | grep "^${SELECTED_MARKER}|" | head -n1)"
-    IFS='|' read -r R_MARKER R_NAME R_PREFIX R_PROTON R_PROTON_PATH R_GPATH <<< "$ROW"
-
-    export WINEPREFIX="$R_PREFIX"
-    export PROTONPATH="$R_PROTON_PATH"
-    export PROTON_VERB="runinprefix"
-    export STEAM_COMPAT_LIBRARY_PATHS="/home"
-
-    IS_GAME_32BIT="$(sqlite3 "$DB" "SELECT is_32bit FROM games WHERE marker_id = '$(sql_escape "$R_MARKER")' LIMIT 1;")"
-
-    CE_EXEC="$CE_BASE_DIR/Cheat Engine.exe"
-    if [ "$IS_GAME_32BIT" != "1" ] && [ -f "$CE_BASE_DIR/cheatengine-x86_64.exe" ]; then
-        CE_EXEC="$CE_BASE_DIR/cheatengine-x86_64.exe"
-    fi
-
-    echo "Launching Cheat Engine executable: $CE_EXEC"
-    umu-run "$CE_EXEC"
-    EXIT_CODE=$?
-    exit "$EXIT_CODE"
-fi
+handle_cheat_engine_mode
 
 # --------------------------------------------------
 # Normal Game Execution Setup
@@ -506,7 +237,7 @@ MARKER_ID="$(get_marker_id "$GAME_DIR")"
 
 # 32-Bit Check
 IS_32BIT=0
-if file -b "$GAME" | grep -q "PE32 "; then
+if check_32bit "$GAME"; then
     IS_32BIT=1
 fi
 
@@ -515,6 +246,14 @@ discover_protons
 HAVE_SAVED=0
 if load_game_config "$MARKER_ID"; then
     HAVE_SAVED=1
+    
+    # Load saved extensions for this game
+    local extensions_rows
+    extensions_rows=$(get_game_extensions "$MARKER_ID")
+    while IFS='|' read -r ext_name ext_enabled; do
+        [ -z "$ext_name" ] && continue
+        EXTENSIONS_ENABLED[$ext_name]="$ext_enabled"
+    done <<< "$extensions_rows"
 else
     PREFIX_MODE="auto"
     MANUAL_NAME=""
@@ -522,6 +261,10 @@ else
     SEL_PROTON_PATH=""
     CE_AUTOBOOT=0
     MANGOHUD=1
+    MUTE_ON_FOCUS_LOSS=0
+    WINDOW_WIDTH=""
+    WINDOW_HEIGHT=""
+    WINDOW_SCALING=0
 fi
 
 # Apply Flag Overrides
@@ -529,11 +272,24 @@ fi
 [ -n "$FLAG_PREFIX_MODE" ] && PREFIX_MODE="$FLAG_PREFIX_MODE"
 [ -n "$FLAG_MANGO" ] && MANGOHUD="$FLAG_MANGO"
 [ -n "$FLAG_CE" ] && CE_AUTOBOOT="$FLAG_CE"
+[ -n "$FLAG_MUTE" ] && MUTE_ON_FOCUS_LOSS="$FLAG_MUTE"
 
+# Parse window flag (format: WxH or WxH:scaling)
+if [ -n "$FLAG_WINDOW" ]; then
+    local width height scaling
+    if [[ "$FLAG_WINDOW" =~ ^([0-9]+)x([0-9]+)(:([01]))?$ ]]; then
+        WINDOW_WIDTH="${BASH_REMATCH[1]}"
+        WINDOW_HEIGHT="${BASH_REMATCH[2]}"
+        WINDOW_SCALING="${BASH_REMATCH[4]:-1}"
+    fi
+fi
+
+# Resolve Proton path
 if [ -n "$SEL_PROTON_NAME" ]; then
     SEL_PROTON_PATH="$(sqlite3 "$DB" "SELECT path FROM protons WHERE name = '$(sql_escape "$SEL_PROTON_NAME")' LIMIT 1;")"
 fi
 
+# Check if we need to show configuration menu
 if [ "$HAVE_SAVED" = "1" ] && [ -n "$SEL_PROTON_NAME" ]; then
     PROTON_STATUS="$(sqlite3 "$DB" "SELECT status FROM protons WHERE name = '$(sql_escape "$SEL_PROTON_NAME")';")"
     [ "$PROTON_STATUS" != "active" ] && CONFIGURE=1
@@ -542,8 +298,12 @@ fi
 [ "$HAVE_SAVED" = "0" ] && [ -z "$FLAG_PROTON" ] && CONFIGURE=1
 
 if [ "$CONFIGURE" = "1" ]; then
-    run_settings_menu
+    show_launch_or_settings
 fi
+
+# --------------------------------------------------
+# Final Launch
+# --------------------------------------------------
 
 case "$PREFIX_MODE" in
     auto)      PREFIX_NAME="$AUTO_NAME" ;;
@@ -552,122 +312,4 @@ case "$PREFIX_MODE" in
     *)         PREFIX_NAME="$AUTO_NAME" ;;
 esac
 
-PREFIX="${PREFIX_ROOT:-$HOME/Games/ProtonPrefixes}/$PREFIX_NAME"
-mkdir -p "$PREFIX"
-
-# Persist configured options
-sqlite3 "$DB" "INSERT INTO games
-    (marker_id, name, prefix_mode, manual_name, proton_name,
-     cheat_engine_autoboot, mangohud, is_32bit, last_path, last_launched)
-    VALUES
-    ('$(sql_escape "$MARKER_ID")',
-     '$(sql_escape "$AUTO_NAME")',
-     '$(sql_escape "$PREFIX_MODE")',
-     '$(sql_escape "$MANUAL_NAME")',
-     '$(sql_escape "$SEL_PROTON_NAME")',
-     $CE_AUTOBOOT,
-     $MANGOHUD,
-     $IS_32BIT,
-     '$(sql_escape "$GAME")',
-     datetime('now'))
-    ON CONFLICT(marker_id) DO UPDATE SET
-        name='$(sql_escape "$AUTO_NAME")',
-        prefix_mode='$(sql_escape "$PREFIX_MODE")',
-        manual_name='$(sql_escape "$MANUAL_NAME")',
-        proton_name='$(sql_escape "$SEL_PROTON_NAME")',
-        cheat_engine_autoboot=$CE_AUTOBOOT,
-        mangohud=$MANGOHUD,
-        is_32bit=$IS_32BIT,
-        last_path='$(sql_escape "$GAME")',
-        last_launched=datetime('now');"
-
-export WINEPREFIX="$PREFIX"
-export PROTONPATH="$SEL_PROTON_PATH"
-export WINEDLLOVERRIDES="winhttp.dll=n,b;winegstreamer="
-export PROTON_ENABLE_WAYLAND=0
-# Proton/Wine Debug Log configuration
-export WINEDEBUG="+err,+warn,+module"
-export PROTON_LOG=1
-export PROTON_LOG_DIR="${LOG_DIR:-$HOME/.local/share/game-launcher/logs}"
-
-# --------------------------------------------------
-# EXE Game Log Handling (Max 2 logs per EXE)
-# --------------------------------------------------
-TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
-GAME_LOG="${GAME_LOG_DIR:-$HOME/.local/share/game-launcher/gamelogs}/${AUTO_NAME}_${TIMESTAMP}.log"
-
-shopt -s nullglob
-OLD_GAME_LOGS=("${GAME_LOG_DIR:-$HOME/.local/share/game-launcher/gamelogs}/${AUTO_NAME}_"*.log)
-shopt -u nullglob
-
-if [ "${#OLD_GAME_LOGS[@]}" -ge 2 ]; then
-    mapfile -t SORTED_LOGS < <(printf '%s\n' "${OLD_GAME_LOGS[@]}" | sort)
-    REMOVE_COUNT=$(( ${#SORTED_LOGS[@]} - 1 ))
-    for (( i=0; i<REMOVE_COUNT; i++ )); do
-        rm -f "${SORTED_LOGS[i]}"
-    done
-fi
-
-# 32-Bit Execution Enhancements
-if [ "$IS_32BIT" -eq 1 ]; then
-    echo "Applying 32-bit execution environment settings..."
-    export WINEARCH="win32"
-    export PROTON_FORCE_LARGE_ADDRESS_AWARE=1
-fi
-
-echo "Launching game..."
-echo "  Game:     $AUTO_NAME"
-echo "  32-Bit:   $IS_32BIT"
-echo "  Proton:   $SEL_PROTON_NAME"
-echo "  Prefix:   $PREFIX"
-echo "  Game Log: $GAME_LOG"
-
-if [ "$MANGOHUD" = "1" ]; then
-    MANGOHUD=1 umu-run "$GAME" > >(tee -a "$GAME_LOG") 2>&1 &
-else
-    umu-run "$GAME" > >(tee -a "$GAME_LOG") 2>&1 &
-fi
-PID=$!
-
-sqlite3 "$DB" "INSERT OR REPLACE INTO running_games
-    (marker_id, game_name, game_path, pid, proton, proton_path, prefix, started_at)
-    VALUES
-    ('$(sql_escape "$MARKER_ID")',
-     '$(sql_escape "$AUTO_NAME")',
-     '$(sql_escape "$GAME")',
-     $PID,
-     '$(sql_escape "$SEL_PROTON_NAME")',
-     '$(sql_escape "$SEL_PROTON_PATH")',
-     '$(sql_escape "$PREFIX")',
-     datetime('now'));"
-
-if [ "$CE_AUTOBOOT" = "1" ] && [ -n "${CHEAT_ENGINE:-}" ]; then
-    (
-        export WINEPREFIX="$PREFIX"
-        export PROTONPATH="$SEL_PROTON_PATH"
-        export PROTON_VERB="runinprefix"
-        export STEAM_COMPAT_LIBRARY_PATHS="/home"
-
-        CE_EXEC="$(dirname "$CHEAT_ENGINE")/cheatengine-x86_64.exe"
-        if [ "$IS_32BIT" -eq 1 ] || [ ! -f "$CE_EXEC" ]; then
-            CE_EXEC="$(dirname "$CHEAT_ENGINE")/Cheat Engine.exe"
-        fi
-
-        echo "Autobooting Cheat Engine executable: $CE_EXEC"
-        umu-run "$CE_EXEC"
-    ) &
-fi
-
-wait "$PID"
-EXIT_CODE=$?
-
-sqlite3 "$DB" "DELETE FROM running_games WHERE marker_id = '$(sql_escape "$MARKER_ID")';"
-
-# Clean orphaned Wine processes if 32-bit app fails to close completely
-if [ "$IS_32BIT" -eq 1 ]; then
-    echo "Cleaning up residual 32-bit processes..."
-    wineserver -k 2>/dev/null || true
-fi
-
-echo "Exited with code: $EXIT_CODE"
-exit "$EXIT_CODE"
+launch_game "$GAME" "$MARKER_ID"
