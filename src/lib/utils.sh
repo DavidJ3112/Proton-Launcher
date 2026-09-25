@@ -198,33 +198,46 @@ detect_audio_system() {
     fi
 }
 
+# List all audio sinks for debugging
+list_audio_sinks() {
+    local audio_system
+    audio_system=$(detect_audio_system)
+    
+    case "$audio_system" in
+        "pipewire")
+            echo "=== PipeWire Sinks ==="
+            # Try the correct wpctl syntax
+            if command -v wpctl >/dev/null 2>&1; then
+                # Modern wpctl: list audio sinks
+                wpctl list audio sinks 2>/dev/null || \
+                wpctl list-sinks 2>/dev/null || \
+                echo "wpctl list commands not working, trying status..."
+                wpctl status 2>/dev/null | head -20
+            fi
+            ;;
+        "pulseaudio")
+            echo "=== PulseAudio Sinks ==="
+            pactl list sinks short 2>/dev/null || \
+            pactl list sinks 2>/dev/null | head -20
+            ;;
+        *)
+            echo "No audio system detected"
+            ;;
+    esac
+}
+
 # Get default audio sink for current system
-# For PipeWire: tries wpctl, pw-cli, and pactl (compatibility layer)
-# For PulseAudio: uses pactl
+# For PipeWire: uses @DEFAULT_AUDIO_SINK@ which always works
+# For PulseAudio: uses pactl to get default sink
 get_audio_sink() {
     local audio_system
     audio_system=$(detect_audio_system)
     
     case "$audio_system" in
         "pipewire")
-            # Try wpctl first (most common)
-            local sink
-            
-            # Method 1: Use @DEFAULT_AUDIO_SINK@ (special PipeWire identifier)
-            # This should work without needing to discover the sink ID
+            # PipeWire: use the special @DEFAULT_AUDIO_SINK@ identifier
+            # This always points to the default sink and doesn't require discovery
             echo "@DEFAULT_AUDIO_SINK@"
-            return 0
-            
-            # Method 2: Try wpctl status (fallback - may not work on all versions)
-            # sink=$(wpctl status 2>/dev/null | grep -oP 'Sink: \K[^\s]+' | head -n1)
-            
-            # Method 3: Try pw-cli (PipeWire CLI)
-            # sink=$(pw-cli list-objects Sink 2>/dev/null | grep -oP 'id \K[0-9]+' | head -n1)
-            
-            # Method 4: Try pactl through PipeWire's PulseAudio compatibility
-            # sink=$(pactl info 2>/dev/null | grep -oP 'Default Sink: \K.*' | head -n1)
-            
-            # If we get here, all methods failed
             ;;
         "pulseaudio")
             # PulseAudio: get default sink
@@ -237,8 +250,6 @@ get_audio_sink() {
 }
 
 # Set mute state for current audio system
-# For PipeWire: uses wpctl with @DEFAULT_AUDIO_SINK@ or sink ID
-# For PulseAudio: uses pactl
 set_audio_mute() {
     local state="$1"  # 0=unmute, 1=mute
     local sink="$2"
@@ -253,21 +264,11 @@ set_audio_mute() {
     
     case "$audio_system" in
         "pipewire")
-            # PipeWire: use wpctl
-            # @DEFAULT_AUDIO_SINK@ is a special identifier that always points to the default sink
-            if [ "$sink" = "@DEFAULT_AUDIO_SINK@" ]; then
-                if [ "$state" -eq 1 ]; then
-                    wpctl set-mute @DEFAULT_AUDIO_SINK@ 1 2>/dev/null
-                else
-                    wpctl set-mute @DEFAULT_AUDIO_SINK@ 0 2>/dev/null
-                fi
+            # PipeWire: use wpctl with @DEFAULT_AUDIO_SINK@
+            if [ "$state" -eq 1 ]; then
+                wpctl set-mute "$sink" 1 2>/dev/null
             else
-                # Specific sink ID
-                if [ "$state" -eq 1 ]; then
-                    wpctl set-mute "$sink" 1 2>/dev/null
-                else
-                    wpctl set-mute "$sink" 0 2>/dev/null
-                fi
+                wpctl set-mute "$sink" 0 2>/dev/null
             fi
             ;;
         "pulseaudio")
@@ -287,27 +288,75 @@ set_audio_mute() {
     return 0
 }
 
-# Get current mute state for debugging
-get_audio_mute_state() {
-    local sink="$1"
-    local audio_system
-    audio_system=$(detect_audio_system)
+# Find game window using multiple strategies
+# Strategy 1: Direct PID match
+# Strategy 2: Find child processes of the given PID (for umu-launcher)
+# Strategy 3: Search by window name
+# Strategy 4: Search for any wine window
+find_game_window() {
+    local game_pid="$1"
+    local game_name="$2"
+    local timeout="${3:-30}"
     
-    case "$audio_system" in
-        "pipewire")
-            if [ "$sink" = "@DEFAULT_AUDIO_SINK@" ]; then
-                wpctl get-mute @DEFAULT_AUDIO_SINK@ 2>/dev/null
-            else
-                wpctl get-mute "$sink" 2>/dev/null
+    local win_id=""
+    local attempts=0
+    local max_attempts=$((timeout * 4))  # Check 4 times per second
+    
+    echo "Searching for game window (PID: $game_pid, Name: $game_name)..."
+    
+    while [ -z "$win_id" ] && [ $attempts -lt $max_attempts ]; do
+        sleep 0.25
+        ((attempts++))
+        
+        # Strategy 1: Direct PID match
+        win_id=$(xdotool search --pid "$game_pid" 2>/dev/null | head -n1)
+        
+        if [ -z "$win_id" ]; then
+            # Strategy 2: Find child processes of game_pid
+            local child_pids
+            child_pids=$(pgrep -P "$game_pid" 2>/dev/null)
+            if [ -n "$child_pids" ]; then
+                for child_pid in $child_pids; do
+                    local child_win
+                    child_win=$(xdotool search --pid "$child_pid" 2>/dev/null | head -n1)
+                    if [ -n "$child_win" ]; then
+                        win_id="$child_win"
+                        game_pid="$child_pid"  # Update to child PID
+                        break
+                    fi
+                done
             fi
-            ;;
-        "pulseaudio")
-            pactl get-sink-mute "$sink" 2>/dev/null
-            ;;
-        *)
-            echo "Unknown"
-            ;;
-    esac
+        fi
+        
+        if [ -z "$win_id" ]; then
+            # Strategy 3: Search by window name
+            win_id=$(xdotool search --name "$game_name" 2>/dev/null | head -n1)
+        fi
+        
+        if [ -z "$win_id" ]; then
+            # Strategy 4: Search for any wine window
+            win_id=$(xdotool search --class "wine" 2>/dev/null | head -n1)
+        fi
+        
+        if [ -z "$win_id" ]; then
+            # Strategy 5: Search for any window with "Game" or "Proton" in the name
+            win_id=$(xdotool search --name "Game" 2>/dev/null | head -n1)
+            if [ -z "$win_id" ]; then
+                win_id=$(xdotool search --name "Proton" 2>/dev/null | head -n1)
+            fi
+        fi
+    done
+    
+    if [ -n "$win_id" ]; then
+        echo "Found game window: $win_id (PID: $game_pid)"
+        echo "$win_id"
+        return 0
+    else
+        echo "WARNING: Could not find game window after $attempts attempts"
+        echo "Tried: direct PID, child processes, window name, wine class"
+        list_audio_sinks
+        return 1
+    fi
 }
 
 # Setup mute on focus loss using xdotool and appropriate audio tool
@@ -315,6 +364,7 @@ get_audio_mute_state() {
 setup_mute_on_focus_loss() {
     local enabled="$1"
     local game_pid="$2"
+    local game_name="$3"
     
     if [ "$enabled" != "1" ]; then
         return 0
@@ -332,72 +382,33 @@ setup_mute_on_focus_loss() {
     
     if [ "$audio_system" = "none" ]; then
         echo "WARNING: No supported audio system found (need PipeWire or PulseAudio)"
+        list_audio_sinks
         return 1
     fi
     
     echo "Using audio system: $audio_system"
     
-    # Wait for game window to appear (umu/Proton takes time to launch)
-    echo "Waiting for game window to appear for mute monitoring..."
-    local win_id=""
-    local attempts=0
-    local max_attempts=30
-    
-    while [ -z "$win_id" ] && [ $attempts -lt $max_attempts ]; do
-        sleep 1
-        win_id=$(xdotool search --pid "$game_pid" 2>/dev/null | head -n1)
-        if [ -z "$win_id" ]; then
-            # Try by window name
-            win_id=$(xdotool search --pid "$game_pid" --name "$AUTO_NAME" 2>/dev/null | head -n1)
-        fi
-        ((attempts++))
-    done
+    # Find the game window using multiple strategies
+    local win_id
+    win_id=$(find_game_window "$game_pid" "$game_name" 30)
     
     if [ -z "$win_id" ]; then
-        echo "WARNING: Could not find game window for mute on focus loss after $max_attempts attempts"
-        echo "This might be because the game is running in a different process."
-        echo "Try running with: WINEESYNC=1 proton-launcher /path/to/game.exe"
+        echo "WARNING: Could not find game window for mute on focus loss"
+        echo "This might be because the game is running in a nested process tree."
+        echo "Try: WINEESYNC=1 proton-launcher /path/to/game.exe"
         return 1
     fi
     
     echo "Mute on focus loss monitoring window: $win_id (PID: $game_pid)"
     
-    # Get the sink name - for PipeWire we use the special @DEFAULT_AUDIO_SINK@
+    # Get the sink - for PipeWire use @DEFAULT_AUDIO_SINK@
     local current_sink
     current_sink=$(get_audio_sink)
     
     if [ -z "$current_sink" ]; then
-        echo "WARNING: Could not determine audio sink for mute on focus loss"
-        # Try to list available sinks for debugging
-        echo "Debug: Trying to detect audio sinks..."
-        
-        local audio_system
-        audio_system=$(detect_audio_system)
-        
-        case "$audio_system" in
-            "pipewire")
-                echo "Debug: wpctl status:"
-                wpctl status 2>&1 | head -20
-                echo "Debug: wpctl list-sinks:"
-                wpctl list-sinks 2>&1
-                ;;
-            "pulseaudio")
-                echo "Debug: pactl list sinks:"
-                pactl list sinks 2>&1 | head -20
-                ;;
-        esac
-        
-        # Fallback: try using @DEFAULT_AUDIO_SINK@ for PipeWire
-        if [ "$audio_system" = "pipewire" ]; then
-            current_sink="@DEFAULT_AUDIO_SINK@"
-            echo "Fallback: Using @DEFAULT_AUDIO_SINK@ for PipeWire"
-        fi
-    fi
-    
-    if [ -z "$current_sink" ]; then
-        echo "ERROR: Cannot determine audio sink. Mute on focus loss will not work."
-        echo "Please report this issue with the debug output above."
-        return 1
+        echo "WARNING: Could not determine audio sink"
+        current_sink="@DEFAULT_AUDIO_SINK@"
+        echo "Fallback: Using @DEFAULT_AUDIO_SINK@"
     fi
     
     echo "Using audio sink: $current_sink"
@@ -469,7 +480,6 @@ apply_window_settings() {
             ;;
         "fullscreen")
             # Force fullscreen
-            # Try multiple approaches for compatibility
             export WINE_FULLSCREEN=1
             unset WINE_DESKTOP
             unset WINE_DPI_SCALING
@@ -483,7 +493,6 @@ apply_window_settings() {
             ;;
         "resizable"|"default")
             # Resizable window - no virtual desktop, behaves like normal window
-            # This is the key for free scaling like any KDE window
             unset WINE_DESKTOP
             unset WINE_DPI_SCALING
             unset WINE_FULLSCREEN
@@ -502,6 +511,7 @@ apply_window_settings() {
 apply_window_mode_post_launch() {
     local mode="$1"
     local game_pid="$2"
+    local game_name="$3"
     
     case "$mode" in
         "maximized")
@@ -510,14 +520,7 @@ apply_window_mode_post_launch() {
                 (
                     echo "Waiting for window to maximize..."
                     local win_id
-                    local attempts=0
-                    local max_attempts=20
-                    
-                    while [ -z "$win_id" ] && [ $attempts -lt $max_attempts ]; do
-                        sleep 0.5
-                        win_id=$(xdotool search --pid "$game_pid" 2>/dev/null | head -n1)
-                        ((attempts++))
-                    done
+                    win_id=$(find_game_window "$game_pid" "$game_name" 10)
                     
                     if [ -n "$win_id" ]; then
                         xdotool windowstate "$win_id" maximize
@@ -537,14 +540,7 @@ apply_window_mode_post_launch() {
                 (
                     echo "Waiting for window to set fullscreen..."
                     local win_id
-                    local attempts=0
-                    local max_attempts=20
-                    
-                    while [ -z "$win_id" ] && [ $attempts -lt $max_attempts ]; do
-                        sleep 0.5
-                        win_id=$(xdotool search --pid "$game_pid" 2>/dev/null | head -n1)
-                        ((attempts++))
-                    done
+                    win_id=$(find_game_window "$game_pid" "$game_name" 10)
                     
                     if [ -n "$win_id" ]; then
                         # Try fullscreen first
@@ -575,14 +571,7 @@ apply_window_mode_post_launch() {
                 (
                     echo "Waiting for window to resize to ${WINDOW_WIDTH}x${WINDOW_HEIGHT}..."
                     local win_id
-                    local attempts=0
-                    local max_attempts=20
-                    
-                    while [ -z "$win_id" ] && [ $attempts -lt $max_attempts ]; do
-                        sleep 0.5
-                        win_id=$(xdotool search --pid "$game_pid" 2>/dev/null | head -n1)
-                        ((attempts++))
-                    done
+                    win_id=$(find_game_window "$game_pid" "$game_name" 10)
                     
                     if [ -n "$win_id" ]; then
                         xdotool windowsize "$win_id" "${WINDOW_WIDTH}" "${WINDOW_HEIGHT}"

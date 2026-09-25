@@ -73,12 +73,13 @@ launch_game() {
     register_running_game "$marker_id" "$game_path" "$PID"
 
     # Apply post-launch window mode (maximized, fullscreen, fixed resizing)
-    apply_window_mode_post_launch "${WINDOW_MODE:-default}" "$PID"
+    apply_window_mode_post_launch "${WINDOW_MODE:-default}" "$PID" "$AUTO_NAME"
 
     # Setup mute on focus loss monitoring AFTER window has had time to appear
+    # Pass the game name to help with window detection
     if [ "${MUTE_ON_FOCUS_LOSS:-0}" = "1" ]; then
         sleep 1  # Give the game a moment to start
-        setup_mute_on_focus_loss "1" "$PID"
+        setup_mute_on_focus_loss "1" "$PID" "$AUTO_NAME"
     fi
 
     # Launch extensions if enabled
