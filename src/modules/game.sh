@@ -345,6 +345,12 @@ handle_cheat_engine_mode() {
             echo "Using default Cheat Engine prefix: $WINEPREFIX"
         fi
         
+        # Ensure /mnt exists to prevent Proton drive mounting errors
+        if [ ! -d "/mnt" ]; then
+            mkdir -p /mnt
+            echo "Created /mnt directory for Proton drive mounting"
+        fi
+        
         # Ensure PROTONPATH is set - discover available protons
         if [ -z "$PROTONPATH" ]; then
             discover_protons
