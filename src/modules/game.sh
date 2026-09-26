@@ -266,6 +266,7 @@ select_game() {
     fi
 
     GAME="$(printf "%b" "$formatted_list" | grep "^${selected_display}|" | cut -d'|' -f2 | head -n1)"
+    export GAME
 }
 
 # Handle Cheat Engine standalone mode (legacy support)
