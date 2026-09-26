@@ -323,8 +323,7 @@ handle_cheat_engine_mode() {
         export PROTON_VERB="runinprefix"
         export STEAM_COMPAT_LIBRARY_PATHS="/home"
         
-        # Also need to set PROTONPATH if not already set
-        [ -z "$PROTONPATH" ] && export PROTONPATH="$R_PROTON_PATH"
+
 
         local is_game_32bit
         is_game_32bit="$(sqlite3 "$DB" "SELECT is_32bit FROM games WHERE marker_id = '$(sql_escape "$R_MARKER")' LIMIT 1;")"
@@ -336,13 +335,27 @@ handle_cheat_engine_mode() {
 
         echo "Launching Cheat Engine executable: $ce_exec"
         
-        # Need to ensure WINEPREFIX is set even when no game is running
+        # Need to ensure WINEPREFIX and PROTONPATH are set even when no game is running
         if [ -z "$WINEPREFIX" ]; then
             # Create a default prefix for Cheat Engine
             local default_ce_prefix="$HOME/Games/ProtonPrefixes/CheatEngine"
             mkdir -p "$default_ce_prefix"
             export WINEPREFIX="$default_ce_prefix"
             echo "Using default Cheat Engine prefix: $WINEPREFIX"
+        fi
+        
+        # Ensure PROTONPATH is set - discover available protons
+        if [ -z "$PROTONPATH" ]; then
+            discover_protons
+            local default_proton
+            default_proton="$(sqlite3 "$DB" "SELECT path FROM protons WHERE status='active' ORDER BY name LIMIT 1;")"
+            if [ -n "$default_proton" ]; then
+                export PROTONPATH="$default_proton"
+                echo "Using default Proton: $PROTONPATH"
+            else
+                echo "ERROR: No Proton installation found. Please install GE-Proton or UMU-Proton."
+                exit 1
+            fi
         fi
         
         umu-run "$ce_exec"
