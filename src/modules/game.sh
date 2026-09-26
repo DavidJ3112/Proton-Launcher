@@ -354,7 +354,7 @@ select_game() {
 }
 
 # Handle Cheat Engine standalone mode (legacy support)
-# Based on srcold/proton-launcher - only works when a game is already running
+# Based on srcold/proton-launcher - works when a game is running OR standalone
 handle_cheat_engine_mode() {
     local ce_base_dir
     ce_base_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
@@ -369,10 +369,40 @@ handle_cheat_engine_mode() {
              ORDER BY started_at DESC;")"
 
         if [ -z "$running" ]; then
-            if command -v rofi >/dev/null 2>&1; then
-                rofi -e "No games are currently running to attach Cheat Engine to."
+            # No running games - launch Cheat Engine standalone with default prefix
+            echo "No games are currently running. Launching Cheat Engine standalone."
+            
+            # Create default prefix
+            local default_ce_prefix="$HOME/Games/ProtonPrefixes/CheatEngine"
+            mkdir -p "$default_ce_prefix"
+            mkdir -p "/mnt"
+            export WINEPREFIX="$default_ce_prefix"
+            
+            # Set PROTONPATH
+            discover_protons
+            local default_proton
+            default_proton="$(sqlite3 "$DB" "SELECT path FROM protons WHERE status='active' ORDER BY name LIMIT 1;")"
+            if [ -n "$default_proton" ]; then
+                export PROTONPATH="$default_proton"
+            else
+                echo "ERROR: No Proton installation found."
+                exit 1
             fi
-            exit 0
+            
+            export PROTON_VERB="runinprefix"
+            export STEAM_COMPAT_LIBRARY_PATHS="/home"
+            export PROTON_NO_DRIVE_MOUNT=1
+            
+            # Determine which executable to use
+            local ce_exec="$ce_base_dir/Cheat Engine.exe"
+            if [ -f "$ce_base_dir/cheatengine-x86_64.exe" ]; then
+                ce_exec="$ce_base_dir/cheatengine-x86_64.exe"
+            fi
+            
+            echo "Launching Cheat Engine executable: $ce_exec"
+            umu-run "$ce_exec"
+            local exit_code=$?
+            exit "$exit_code"
         fi
 
         # Format running games list
@@ -408,9 +438,11 @@ handle_cheat_engine_mode() {
         export PROTONPATH="$R_PROTON_PATH"
         export PROTON_VERB="runinprefix"
         export STEAM_COMPAT_LIBRARY_PATHS="/home"
+        export PROTON_NO_DRIVE_MOUNT=1
 
         local is_game_32bit
         is_game_32bit="$(sqlite3 "$DB" "SELECT is_32bit FROM games WHERE marker_id = '$(sql_escape "$R_MARKER")' LIMIT 1;")"
+        [ -z "$is_game_32bit" ] && is_game_32bit=0
 
         local ce_exec="$ce_base_dir/Cheat Engine.exe"
         if [ "$is_game_32bit" != "1" ] && [ -f "$ce_base_dir/cheatengine-x86_64.exe" ]; then
