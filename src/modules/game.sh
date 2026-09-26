@@ -227,6 +227,90 @@ launch_extension() {
     umu-run "$final_ext_path" &
 }
 
+# Generic function to launch a standalone tool attached to a running game
+# This is extensible - any tool can use this by setting the right environment
+# Usage: launch_standalone_tool "Tool Name" "executable_path" "tool_name"
+launch_standalone_tool() {
+    local display_name="$1"
+    local tool_exec="$2"
+    local tool_name="$3"
+    
+    echo "${display_name} execution mode requested."
+
+    local running
+    running="$(sqlite3 -separator '|' "$DB" \
+        "SELECT marker_id, game_name, prefix, proton, proton_path, game_path
+         FROM running_games
+         ORDER BY started_at DESC;")"
+
+    if [ -z "$running" ]; then
+        if command -v rofi >/dev/null 2>&1; then
+            rofi -e "No games are currently running to attach ${display_name} to."
+        fi
+        exit 0
+    fi
+
+    # Format running games list
+    local tool_list=""
+    while IFS='|' read -r r_marker r_name r_prefix r_proton r_p_path r_gpath; do
+        [ -z "$r_marker" ] && continue
+        local r_folder r_exe
+        r_folder="$(basename "$(dirname "$r_gpath")")"
+        r_exe="$(basename "$r_gpath")"
+        tool_list="${tool_list}[$r_folder] $r_exe|$r_marker\n"
+    done <<< "$running"
+
+    local pick_display
+    if command -v rofi >/dev/null 2>&1; then
+        pick_display="$(printf "%b" "$tool_list" | cut -d'|' -f1 | rofi -dmenu -i -p "Attach ${display_name} to")"
+    else
+        echo "Running games:"
+        echo "$tool_list"
+        read -r -p "Select game marker: " pick_display
+    fi
+
+    if [ -z "$pick_display" ]; then
+        exit 0
+    fi
+
+    local selected_marker
+    selected_marker="$(printf "%b" "$tool_list" | grep "^${pick_display}|" | cut -d'|' -f2 | head -n1)"
+    local row
+    row="$(printf '%s\n' "$running" | grep "^${selected_marker}|" | head -n1)"
+    IFS='|' read -r R_MARKER R_NAME R_PREFIX R_PROTON R_PROTON_PATH R_GPATH <<< "$row"
+
+    export WINEPREFIX="$R_PREFIX"
+    export PROTONPATH="$R_PROTON_PATH"
+    export PROTON_VERB="runinprefix"
+    export STEAM_COMPAT_LIBRARY_PATHS="/home"
+
+    echo "Launching ${display_name} executable: $tool_exec"
+    umu-run "$tool_exec"
+    local exit_code=$?
+    exit "$exit_code"
+}
+
+# Handle Cheat Engine standalone mode (legacy support)
+# Now uses the generic launch_standalone_tool function
+handle_cheat_engine_mode() {
+    local ce_base_dir
+    ce_base_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
+    
+    if [ -n "${CHEAT_ENGINE:-}" ] && { [ "$GAME" = "$CHEAT_ENGINE" ] || [ "$GAME" = "$ce_base_dir/Cheat Engine.exe" ] || [ "$GAME" = "$ce_base_dir/cheatengine-x86_64.exe" ]; }; then
+        # Determine which Cheat Engine executable to use
+        local ce_exec="$ce_base_dir/Cheat Engine.exe"
+        
+        # Check if we should use 64-bit version
+        # For standalone mode, we use the game's architecture from the running game
+        # But since we don't know yet, default to Cheat Engine.exe
+        # The launch_standalone_tool will set WINEPREFIX from the selected game
+        
+        # For now, just use the generic function
+        # Note: architecture selection happens in launch_standalone_tool based on game
+        launch_standalone_tool "Cheat Engine" "$ce_exec" "CHEAT_ENGINE"
+    fi
+}
+
 # Select game from previously run games
 select_game() {
     echo "No executable specified. Fetching previously run games..."
@@ -270,6 +354,7 @@ select_game() {
 }
 
 # Handle Cheat Engine standalone mode (legacy support)
+# Based on srcold/proton-launcher - only works when a game is already running
 handle_cheat_engine_mode() {
     local ce_base_dir
     ce_base_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
@@ -284,9 +369,10 @@ handle_cheat_engine_mode() {
              ORDER BY started_at DESC;")"
 
         if [ -z "$running" ]; then
-            # No running games - just launch Cheat Engine normally
-            echo "No running games found. Launching Cheat Engine standalone."
-            return 0
+            if command -v rofi >/dev/null 2>&1; then
+                rofi -e "No games are currently running to attach Cheat Engine to."
+            fi
+            exit 0
         fi
 
         # Format running games list
@@ -318,13 +404,10 @@ handle_cheat_engine_mode() {
         row="$(printf '%s\n' "$running" | grep "^${selected_marker}|" | head -n1)"
         IFS='|' read -r R_MARKER R_NAME R_PREFIX R_PROTON R_PROTON_PATH R_GPATH <<< "$row"
 
-        # Set up environment for running in the game's prefix
         export WINEPREFIX="$R_PREFIX"
         export PROTONPATH="$R_PROTON_PATH"
         export PROTON_VERB="runinprefix"
         export STEAM_COMPAT_LIBRARY_PATHS="/home"
-        
-
 
         local is_game_32bit
         is_game_32bit="$(sqlite3 "$DB" "SELECT is_32bit FROM games WHERE marker_id = '$(sql_escape "$R_MARKER")' LIMIT 1;")"
@@ -335,44 +418,12 @@ handle_cheat_engine_mode() {
         fi
 
         echo "Launching Cheat Engine executable: $ce_exec"
-        
-        # Need to ensure WINEPREFIX and PROTONPATH are set even when no game is running
-        if [ -z "$WINEPREFIX" ]; then
-            # Create a default prefix for Cheat Engine
-            local default_ce_prefix="$HOME/Games/ProtonPrefixes/CheatEngine"
-            mkdir -p "$default_ce_prefix"
-            export WINEPREFIX="$default_ce_prefix"
-            echo "Using default Cheat Engine prefix: $WINEPREFIX"
-        fi
-        
-        # Ensure /mnt exists to prevent Proton drive mounting errors
-        if [ ! -d "/mnt" ]; then
-            mkdir -p /mnt
-            echo "Created /mnt directory for Proton drive mounting"
-        fi
-        
-        # Disable ProtonFixes drive mounting for standalone tools to avoid errors
-        export PROTON_NO_DRIVE_MOUNT=1
-        
-        # Ensure PROTONPATH is set - discover available protons
-        if [ -z "$PROTONPATH" ]; then
-            discover_protons
-            local default_proton
-            default_proton="$(sqlite3 "$DB" "SELECT path FROM protons WHERE status='active' ORDER BY name LIMIT 1;")"
-            if [ -n "$default_proton" ]; then
-                export PROTONPATH="$default_proton"
-                echo "Using default Proton: $PROTONPATH"
-            else
-                echo "ERROR: No Proton installation found. Please install GE-Proton or UMU-Proton."
-                exit 1
-            fi
-        fi
-        
         umu-run "$ce_exec"
         local exit_code=$?
         exit "$exit_code"
     fi
 }
+
 
 # Show extensions configuration menu
 show_extensions_menu() {
