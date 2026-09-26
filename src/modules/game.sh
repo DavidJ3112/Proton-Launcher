@@ -351,6 +351,9 @@ handle_cheat_engine_mode() {
             echo "Created /mnt directory for Proton drive mounting"
         fi
         
+        # Disable ProtonFixes drive mounting for standalone tools to avoid errors
+        export PROTON_NO_DRIVE_MOUNT=1
+        
         # Ensure PROTONPATH is set - discover available protons
         if [ -z "$PROTONPATH" ]; then
             discover_protons
