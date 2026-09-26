@@ -283,10 +283,9 @@ handle_cheat_engine_mode() {
              ORDER BY started_at DESC;")"
 
         if [ -z "$running" ]; then
-            if command -v rofi >/dev/null 2>&1; then
-                rofi -e "No games are currently running to attach Cheat Engine to."
-            fi
-            exit 0
+            # No running games - just launch Cheat Engine normally
+            echo "No running games found. Launching Cheat Engine standalone."
+            return 0
         fi
 
         # Format running games list
@@ -318,10 +317,14 @@ handle_cheat_engine_mode() {
         row="$(printf '%s\n' "$running" | grep "^${selected_marker}|" | head -n1)"
         IFS='|' read -r R_MARKER R_NAME R_PREFIX R_PROTON R_PROTON_PATH R_GPATH <<< "$row"
 
+        # Set up environment for running in the game's prefix
         export WINEPREFIX="$R_PREFIX"
         export PROTONPATH="$R_PROTON_PATH"
         export PROTON_VERB="runinprefix"
         export STEAM_COMPAT_LIBRARY_PATHS="/home"
+        
+        # Also need to set PROTONPATH if not already set
+        [ -z "$PROTONPATH" ] && export PROTONPATH="$R_PROTON_PATH"
 
         local is_game_32bit
         is_game_32bit="$(sqlite3 "$DB" "SELECT is_32bit FROM games WHERE marker_id = '$(sql_escape "$R_MARKER")' LIMIT 1;")"
@@ -332,6 +335,16 @@ handle_cheat_engine_mode() {
         fi
 
         echo "Launching Cheat Engine executable: $ce_exec"
+        
+        # Need to ensure WINEPREFIX is set even when no game is running
+        if [ -z "$WINEPREFIX" ]; then
+            # Create a default prefix for Cheat Engine
+            local default_ce_prefix="$HOME/Games/ProtonPrefixes/CheatEngine"
+            mkdir -p "$default_ce_prefix"
+            export WINEPREFIX="$default_ce_prefix"
+            echo "Using default Cheat Engine prefix: $WINEPREFIX"
+        fi
+        
         umu-run "$ce_exec"
         local exit_code=$?
         exit "$exit_code"
