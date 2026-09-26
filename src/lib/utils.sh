@@ -187,6 +187,32 @@ get_cheat_engine_exe() {
     fi
 }
 
+# Given a configured extension executable path and whether the *target*
+# (the running game we're attaching to, or the extension itself in
+# standalone mode) is 32-bit, look for a 64-bit sibling binary sitting next
+# to the configured executable and prefer it. This generalizes the old
+# Cheat-Engine-only "use cheatengine-x86_64.exe for 32-bit games" behavior
+# to any extension without hardcoding a specific name.
+resolve_extension_binary() {
+    local ext_path="$1"
+    local target_is_32bit="${2:-0}"
+
+    if [ "$target_is_32bit" = "1" ] && [ -n "$ext_path" ]; then
+        local dir variant
+        dir="$(dirname "$ext_path")"
+        shopt -s nullglob nocaseglob
+        for variant in "$dir"/*x86_64*.exe "$dir"/*64bit*.exe; do
+            if [ -f "$variant" ]; then
+                shopt -u nullglob nocaseglob
+                echo "$variant"
+                return 0
+            fi
+        done
+        shopt -u nullglob nocaseglob
+    fi
+
+    echo "$ext_path"
+}
 
 # Find game window using multiple strategies
 # Strategy 1: Direct PID match

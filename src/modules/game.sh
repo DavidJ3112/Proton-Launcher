@@ -165,7 +165,7 @@ cleanup_game_logs() {
     fi
 }
 
-# Launch enabled extensions
+# Launch enabled extensions (auto-launch alongside the game that is starting)
 launch_enabled_extensions() {
     local marker_id="$1"
     
@@ -174,7 +174,7 @@ launch_enabled_extensions() {
         if [ "$enabled" -eq 1 ]; then
             local ext_path
             # Try to get extension path - if it doesn't exist, skip silently
-            if ext_path=$(get_extension_path "$ext_name" 2>/dev/null); then
+            if ext_path=$(get_configured_extension_path "$ext_name" 2>/dev/null) && [ -n "$ext_path" ]; then
                 launch_extension "$ext_name" "$ext_path" "$marker_id"
             else
                 echo "WARNING: Extension '$ext_name' not found, skipping"
@@ -183,19 +183,11 @@ launch_enabled_extensions() {
     done
 }
 
-# Launch a specific extension
+# Launch a specific extension alongside the currently-starting game
 launch_extension() {
     local ext_name="$1"
     local ext_path="$2"
     local marker_id="$3"
-    
-    # Check if extension file exists
-    if [ ! -f "$ext_path" ]; then
-        echo "WARNING: Extension '$ext_name' path does not exist: $ext_path"
-        return 1
-    fi
-    
-    echo "Launching extension: $ext_name ($ext_path)"
     
     # Get running game info for this marker
     local row
@@ -208,107 +200,312 @@ launch_extension() {
     fi
     
     IFS='|' read -r game_prefix game_proton_path <<< "$row"
-    
+
+    # Resolve architecture-specific variant (e.g. a 64-bit build sitting next
+    # to the configured executable) based on the game we're launching alongside.
+    local final_ext_path
+    final_ext_path="$(resolve_extension_binary "$ext_path" "$IS_32BIT")"
+
+    if [ ! -f "$final_ext_path" ]; then
+        echo "WARNING: Extension '$ext_name' path does not exist: $final_ext_path"
+        return 1
+    fi
+
+    echo "Launching extension: $ext_name ($final_ext_path)"
+
     export WINEPREFIX="$game_prefix"
     export PROTONPATH="$game_proton_path"
     export PROTON_VERB="runinprefix"
     export STEAM_COMPAT_LIBRARY_PATHS="/home"
-    
-    # Handle architecture-specific extensions
-    local final_ext_path="$ext_path"
-    if [ "$ext_name" = "CHEAT_ENGINE" ] && [ "$IS_32BIT" -eq 1 ]; then
-        local ce_dir
-        ce_dir=$(dirname "$ext_path")
-        if [ -f "$ce_dir/cheatengine-x86_64.exe" ]; then
-            final_ext_path="$ce_dir/cheatengine-x86_64.exe"
-        fi
+
+    local mounts
+    if mounts="$(get_extension_mounts "$ext_name" 2>/dev/null)" && [ -n "$mounts" ]; then
+        export STEAM_COMPAT_MOUNTS="$mounts"
+        echo "  Extra mounts: $mounts"
+    else
+        unset STEAM_COMPAT_MOUNTS
     fi
-    
+
     umu-run "$final_ext_path" &
 }
 
-# Generic function to launch a standalone tool attached to a running game
-# This is extensible - any tool can use this by setting the right environment
-# Usage: launch_standalone_tool "Tool Name" "executable_path" "tool_name"
-launch_standalone_tool() {
-    local display_name="$1"
-    local tool_exec="$2"
-    local tool_name="$3"
-    
-    echo "${display_name} execution mode requested."
+# ======================================================================
+# Extension Attach / Standalone Launch Pipeline
+#
+# This implements the flow for launching an extension binary directly
+# (e.g. running the launcher against Cheat Engine.exe, or any other
+# executable configured in extensions.conf), as opposed to launching a
+# normal game:
+#
+#   F1  check_extension_target      - is the requested executable itself
+#                                      a configured extension?
+#   F2  prompt_attach_or_standalone - ask the user: attach to a running
+#                                      game, or boot standalone?
+#   F3  pick_running_game_for_attach - let the user choose which running
+#                                      game to attach to
+#   F4  gather_attach_mounts        - pull the target game's prefix/proton
+#                                      data (already fetched in F3) and any
+#                                      extra mounts the extension needs
+#   F5  launch_attached_extension   - actually launch it
+#
+# IMPORTANT: none of this ever writes to the `games` or `game_extensions`
+# tables. Extensions are never persisted as if they were games.
+# ======================================================================
 
+# F1: Determine whether $1 (an already realpath'd executable) matches a
+# configured extension. On match, sets EXT_NAME / EXT_PATH and returns 0.
+check_extension_target() {
+    local exe_path="$1"
+    EXT_NAME=""
+    EXT_PATH=""
+
+    local name path resolved
+
+    # Pass 1: exact path match (preferred, unambiguous)
+    for name in $AVAILABLE_EXTENSIONS; do
+        path="$(get_configured_extension_path "$name")"
+        [ -z "$path" ] && continue
+        resolved="$(realpath -m "$path" 2>/dev/null)"
+        [ -z "$resolved" ] && continue
+        if [ "$exe_path" = "$resolved" ]; then
+            EXT_NAME="$name"
+            EXT_PATH="$resolved"
+            return 0
+        fi
+    done
+
+    # Pass 2: same-directory fallback. Handles cases like a 32/64-bit build
+    # of the same tool sitting next to the configured executable.
+    for name in $AVAILABLE_EXTENSIONS; do
+        path="$(get_configured_extension_path "$name")"
+        [ -z "$path" ] && continue
+        resolved="$(realpath -m "$path" 2>/dev/null)"
+        [ -z "$resolved" ] && continue
+        if [ "$(dirname "$exe_path")" = "$(dirname "$resolved")" ]; then
+            EXT_NAME="$name"
+            EXT_PATH="$resolved"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+# F2: Ask the user whether they want to attach this extension to a running
+# game, or boot it standalone. Prints "attached", "standalone" or "cancel".
+prompt_attach_or_standalone() {
+    local pick
+    if command -v rofi >/dev/null 2>&1; then
+        pick="$(printf '%s\n' "Attached Boot (attach to a running game)" "Standalone Boot" "Cancel" | \
+            rofi -dmenu -i -p "$EXT_NAME: launch mode")"
+    else
+        # NOTE: this function's output is captured via $(...), so anything
+        # printed to stdout here would corrupt the returned mode. All
+        # prompt/menu text must go to stderr.
+        {
+            echo "Launch mode for $EXT_NAME:"
+            echo "  1. Attached Boot (attach to a running game)"
+            echo "  2. Standalone Boot"
+            echo "  3. Cancel"
+        } >&2
+        read -r -p "Select option: " pick
+    fi
+
+    case "$pick" in
+        "Attached Boot"*|1) echo "attached" ;;
+        "Standalone Boot"*|2) echo "standalone" ;;
+        *) echo "cancel" ;;
+    esac
+}
+
+# F3 + F4: Let the user pick a currently running game from the database and
+# pull its prefix/proton/32-bit data. On success, sets:
+#   ATTACH_MARKER, ATTACH_NAME, ATTACH_PREFIX, ATTACH_PROTON,
+#   ATTACH_PROTON_PATH, ATTACH_GAME_PATH, ATTACH_IS_32BIT
+pick_running_game_for_attach() {
     local running
     running="$(sqlite3 -separator '|' "$DB" \
-        "SELECT marker_id, game_name, prefix, proton, proton_path, game_path
-         FROM running_games
-         ORDER BY started_at DESC;")"
+        "SELECT rg.marker_id, rg.game_name, rg.prefix, rg.proton, rg.proton_path,
+                rg.game_path, COALESCE(g.is_32bit, 0)
+         FROM running_games rg
+         LEFT JOIN games g ON g.marker_id = rg.marker_id
+         ORDER BY rg.started_at DESC;")"
 
     if [ -z "$running" ]; then
-        if command -v rofi >/dev/null 2>&1; then
-            rofi -e "No games are currently running to attach ${display_name} to."
-        fi
-        exit 0
+        display_error "No games are currently running to attach ${EXT_NAME} to."
+        return 1
     fi
 
-    # Format running games list
-    local tool_list=""
-    while IFS='|' read -r r_marker r_name r_prefix r_proton r_p_path r_gpath; do
-        [ -z "$r_marker" ] && continue
-        local r_folder r_exe
-        r_folder="$(basename "$(dirname "$r_gpath")")"
-        r_exe="$(basename "$r_gpath")"
-        tool_list="${tool_list}[$r_folder] $r_exe|$r_marker\n"
+    local -a labels rows
+    local line r_gpath folder exe
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        r_gpath="$(printf '%s' "$line" | awk -F'|' '{print $6}')"
+        folder="$(basename "$(dirname "$r_gpath")")"
+        exe="$(basename "$r_gpath")"
+        labels+=("[$folder] $exe")
+        rows+=("$line")
     done <<< "$running"
 
-    local pick_display
+    local choice idx=-1 i
     if command -v rofi >/dev/null 2>&1; then
-        pick_display="$(printf "%b" "$tool_list" | cut -d'|' -f1 | rofi -dmenu -i -p "Attach ${display_name} to")"
+        choice="$(printf '%s\n' "${labels[@]}" | rofi -dmenu -i -p "Attach ${EXT_NAME} to")"
     else
-        echo "Running games:"
-        echo "$tool_list"
-        read -r -p "Select game marker: " pick_display
+        echo "Currently running games:"
+        for i in "${!labels[@]}"; do
+            echo "  $((i+1)). ${labels[$i]}"
+        done
+        read -r -p "Select number: " choice
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#labels[@]}" ]; then
+            idx=$((choice - 1))
+        fi
     fi
 
-    if [ -z "$pick_display" ]; then
-        exit 0
+    [ -z "$choice" ] && return 1
+
+    if [ "$idx" -lt 0 ]; then
+        for i in "${!labels[@]}"; do
+            if [ "${labels[$i]}" = "$choice" ]; then
+                idx=$i
+                break
+            fi
+        done
     fi
 
-    local selected_marker
-    selected_marker="$(printf "%b" "$tool_list" | grep "^${pick_display}|" | cut -d'|' -f2 | head -n1)"
-    local row
-    row="$(printf '%s\n' "$running" | grep "^${selected_marker}|" | head -n1)"
-    IFS='|' read -r R_MARKER R_NAME R_PREFIX R_PROTON R_PROTON_PATH R_GPATH <<< "$row"
+    [ "$idx" -lt 0 ] && return 1
 
-    export WINEPREFIX="$R_PREFIX"
-    export PROTONPATH="$R_PROTON_PATH"
+    IFS='|' read -r ATTACH_MARKER ATTACH_NAME ATTACH_PREFIX ATTACH_PROTON \
+        ATTACH_PROTON_PATH ATTACH_GAME_PATH ATTACH_IS_32BIT <<< "${rows[$idx]}"
+
+    return 0
+}
+
+# F4 (mounts half): populate ATTACH_MOUNTS from extensions.conf, if configured.
+gather_attach_mounts() {
+    ATTACH_MOUNTS=""
+    local mounts
+    if mounts="$(get_extension_mounts "$EXT_NAME" 2>/dev/null)" && [ -n "$mounts" ]; then
+        ATTACH_MOUNTS="$mounts"
+    fi
+}
+
+# F5: Launch the extension attached to the previously selected running game.
+launch_attached_extension() {
+    local binary
+    binary="$(resolve_extension_binary "$EXT_PATH" "$ATTACH_IS_32BIT")"
+
+    if [ ! -f "$binary" ]; then
+        display_error "Extension executable not found:\n$binary"
+        exit 1
+    fi
+
+    export WINEPREFIX="$ATTACH_PREFIX"
+    export PROTONPATH="$ATTACH_PROTON_PATH"
     export PROTON_VERB="runinprefix"
     export STEAM_COMPAT_LIBRARY_PATHS="/home"
 
-    echo "Launching ${display_name} executable: $tool_exec"
-    umu-run "$tool_exec"
+    if [ -n "$ATTACH_MOUNTS" ]; then
+        export STEAM_COMPAT_MOUNTS="$ATTACH_MOUNTS"
+    else
+        unset STEAM_COMPAT_MOUNTS
+    fi
+
+    echo "Attaching $EXT_NAME to '$ATTACH_NAME' (marker: $ATTACH_MARKER)"
+    echo "  Executable: $binary"
+    echo "  Prefix:     $ATTACH_PREFIX"
+    echo "  Proton:     $ATTACH_PROTON"
+    [ -n "$ATTACH_MOUNTS" ] && echo "  Extra mounts: $ATTACH_MOUNTS"
+
+    umu-run "$binary"
     local exit_code=$?
+    echo "$EXT_NAME exited with code: $exit_code"
     exit "$exit_code"
 }
 
-# Handle Cheat Engine standalone mode (legacy support)
-# Now uses the generic launch_standalone_tool function
-handle_cheat_engine_mode() {
-    local ce_base_dir
-    ce_base_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
-    
-    if [ -n "${CHEAT_ENGINE:-}" ] && { [ "$GAME" = "$CHEAT_ENGINE" ] || [ "$GAME" = "$ce_base_dir/Cheat Engine.exe" ] || [ "$GAME" = "$ce_base_dir/cheatengine-x86_64.exe" ]; }; then
-        # Determine which Cheat Engine executable to use
-        local ce_exec="$ce_base_dir/Cheat Engine.exe"
-        
-        # Check if we should use 64-bit version
-        # For standalone mode, we use the game's architecture from the running game
-        # But since we don't know yet, default to Cheat Engine.exe
-        # The launch_standalone_tool will set WINEPREFIX from the selected game
-        
-        # For now, just use the generic function
-        # Note: architecture selection happens in launch_standalone_tool based on game
-        launch_standalone_tool "Cheat Engine" "$ce_exec" "CHEAT_ENGINE"
+# Standalone boot: run the extension on its own, dedicated Proton prefix,
+# without attaching to any running game. Mirrors what standalone Cheat
+# Engine used to do, generalized to any extension. Never touches the
+# `games` table.
+launch_extension_standalone() {
+    echo "$EXT_NAME standalone execution mode requested."
+
+    local prefix="${PREFIX_ROOT:-$HOME/Games/ProtonPrefixes}/${EXT_NAME}"
+    mkdir -p "$prefix"
+
+    discover_protons
+    local default_proton
+    default_proton="$(sqlite3 "$DB" "SELECT path FROM protons WHERE status='active' ORDER BY name LIMIT 1;")"
+    if [ -z "$default_proton" ]; then
+        display_error "No active Proton installation found. Cannot launch $EXT_NAME."
+        exit 1
     fi
+
+    if [ ! -f "$EXT_PATH" ]; then
+        display_error "Extension executable not found:\n$EXT_PATH"
+        exit 1
+    fi
+
+    export WINEPREFIX="$prefix"
+    export PROTONPATH="$default_proton"
+    export PROTON_VERB="runinprefix"
+    export STEAM_COMPAT_LIBRARY_PATHS="/home"
+
+    local mounts
+    if mounts="$(get_extension_mounts "$EXT_NAME" 2>/dev/null)" && [ -n "$mounts" ]; then
+        export STEAM_COMPAT_MOUNTS="$mounts"
+    else
+        unset STEAM_COMPAT_MOUNTS
+    fi
+
+    echo "Launching $EXT_NAME standalone: $EXT_PATH"
+    echo "  Prefix: $prefix"
+    echo "  Proton: $default_proton"
+    [ -n "$mounts" ] && echo "  Extra mounts: $mounts"
+
+    umu-run "$EXT_PATH"
+    local exit_code=$?
+    echo "$EXT_NAME exited with code: $exit_code"
+    exit "$exit_code"
+}
+
+# Orchestrator for the whole pipeline. Call this with the resolved executable
+# path the user asked to launch. If it's not a configured extension, this
+# returns 1 so the caller proceeds with normal game boot. Every branch that
+# *does* match an extension exits the process itself (it never returns).
+handle_extension_launch() {
+    local exe_path="$1"
+
+    # F1
+    if ! check_extension_target "$exe_path"; then
+        return 1
+    fi
+
+    echo "Detected extension launch target: $EXT_NAME ($EXT_PATH)"
+
+    # F2
+    local mode
+    mode="$(prompt_attach_or_standalone)"
+
+    case "$mode" in
+        attached)
+            # F3
+            if ! pick_running_game_for_attach; then
+                echo "No running game selected/available for $EXT_NAME attach; exiting."
+                exit 0
+            fi
+            # F4
+            gather_attach_mounts
+            # F5
+            launch_attached_extension
+            ;;
+        standalone)
+            launch_extension_standalone
+            ;;
+        *)
+            echo "Cancelled by user."
+            exit 0
+            ;;
+    esac
 }
 
 # Select game from previously run games
@@ -352,110 +549,6 @@ select_game() {
     GAME="$(printf "%b" "$formatted_list" | grep "^${selected_display}|" | cut -d'|' -f2 | head -n1)"
     export GAME
 }
-
-# Handle Cheat Engine standalone mode (legacy support)
-# Based on srcold/proton-launcher - works when a game is running OR standalone
-handle_cheat_engine_mode() {
-    local ce_base_dir
-    ce_base_dir="$(dirname "${CHEAT_ENGINE:-$HOME/Cheat Engine/Cheat Engine.exe}")"
-    
-    if [ -n "${CHEAT_ENGINE:-}" ] && { [ "$GAME" = "$CHEAT_ENGINE" ] || [ "$GAME" = "$ce_base_dir/Cheat Engine.exe" ] || [ "$GAME" = "$ce_base_dir/cheatengine-x86_64.exe" ]; }; then
-        echo "Cheat Engine execution mode requested."
-
-        local running
-        running="$(sqlite3 -separator '|' "$DB" \
-            "SELECT marker_id, game_name, prefix, proton, proton_path, game_path
-             FROM running_games
-             ORDER BY started_at DESC;")"
-
-        if [ -z "$running" ]; then
-            # No running games - launch Cheat Engine standalone with default prefix
-            echo "No games are currently running. Launching Cheat Engine standalone."
-            
-            # Create default prefix
-            local default_ce_prefix="$HOME/Games/ProtonPrefixes/CheatEngine"
-            mkdir -p "$default_ce_prefix"
-            mkdir -p "/mnt"
-            export WINEPREFIX="$default_ce_prefix"
-            
-            # Set PROTONPATH
-            discover_protons
-            local default_proton
-            default_proton="$(sqlite3 "$DB" "SELECT path FROM protons WHERE status='active' ORDER BY name LIMIT 1;")"
-            if [ -n "$default_proton" ]; then
-                export PROTONPATH="$default_proton"
-            else
-                echo "ERROR: No Proton installation found."
-                exit 1
-            fi
-            
-            export PROTON_VERB="runinprefix"
-            export STEAM_COMPAT_LIBRARY_PATHS="/home"
-            export PROTON_NO_DRIVE_MOUNT=1
-            
-            # Determine which executable to use
-            local ce_exec="$ce_base_dir/Cheat Engine.exe"
-            if [ -f "$ce_base_dir/cheatengine-x86_64.exe" ]; then
-                ce_exec="$ce_base_dir/cheatengine-x86_64.exe"
-            fi
-            
-            echo "Launching Cheat Engine executable: $ce_exec"
-            umu-run "$ce_exec"
-            local exit_code=$?
-            exit "$exit_code"
-        fi
-
-        # Format running games list
-        local ce_list=""
-        while IFS='|' read -r r_marker r_name r_prefix r_proton r_p_path r_gpath; do
-            [ -z "$r_marker" ] && continue
-            local r_folder r_exe
-            r_folder="$(basename "$(dirname "$r_gpath")")"
-            r_exe="$(basename "$r_gpath")"
-            ce_list="${ce_list}[$r_folder] $r_exe|$r_marker\n"
-        done <<< "$running"
-
-        local pick_display
-        if command -v rofi >/dev/null 2>&1; then
-            pick_display="$(printf "%b" "$ce_list" | cut -d'|' -f1 | rofi -dmenu -i -p "Attach Cheat Engine to")"
-        else
-            echo "Running games:"
-            echo "$ce_list"
-            read -r -p "Select game marker: " pick_display
-        fi
-
-        if [ -z "$pick_display" ]; then
-            exit 0
-        fi
-
-        local selected_marker
-        selected_marker="$(printf "%b" "$ce_list" | grep "^${pick_display}|" | cut -d'|' -f2 | head -n1)"
-        local row
-        row="$(printf '%s\n' "$running" | grep "^${selected_marker}|" | head -n1)"
-        IFS='|' read -r R_MARKER R_NAME R_PREFIX R_PROTON R_PROTON_PATH R_GPATH <<< "$row"
-
-        export WINEPREFIX="$R_PREFIX"
-        export PROTONPATH="$R_PROTON_PATH"
-        export PROTON_VERB="runinprefix"
-        export STEAM_COMPAT_LIBRARY_PATHS="/home"
-        export PROTON_NO_DRIVE_MOUNT=1
-
-        local is_game_32bit
-        is_game_32bit="$(sqlite3 "$DB" "SELECT is_32bit FROM games WHERE marker_id = '$(sql_escape "$R_MARKER")' LIMIT 1;")"
-        [ -z "$is_game_32bit" ] && is_game_32bit=0
-
-        local ce_exec="$ce_base_dir/Cheat Engine.exe"
-        if [ "$is_game_32bit" != "1" ] && [ -f "$ce_base_dir/cheatengine-x86_64.exe" ]; then
-            ce_exec="$ce_base_dir/cheatengine-x86_64.exe"
-        fi
-
-        echo "Launching Cheat Engine executable: $ce_exec"
-        umu-run "$ce_exec"
-        local exit_code=$?
-        exit "$exit_code"
-    fi
-}
-
 
 # Show extensions configuration menu
 show_extensions_menu() {

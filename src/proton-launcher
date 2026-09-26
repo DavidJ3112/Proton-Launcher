@@ -96,7 +96,7 @@ if ! command -v sqlite3 >/dev/null 2>&1; then
     exit 1
 fi
 
-# Initialize database with versioning
+# Initialize database with versioning (auto-migrates to the newest schema)
 init_database
 
 # --------------------------------------------------
@@ -111,6 +111,14 @@ FLAG_MANGO=""
 FLAG_CE=""
 CONFIG_MODE=0
 FLAG_WINDOW=""
+
+# Extension enabled/disabled state is keyed by extension NAME (e.g.
+# "CHEAT_ENGINE"), so this MUST be an associative array. Without this
+# declaration bash treats every EXTENSIONS_ENABLED[$name]=... assignment as
+# an arithmetic subscript, which silently collapses every extension's state
+# onto the same index (0) - this was the root cause of extensions/attached
+# launches behaving incorrectly.
+declare -A EXTENSIONS_ENABLED
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -167,6 +175,10 @@ if [ -f "$EXTENSIONS_FILE" ]; then
         
         # Clean up the name
         ext_name=$(echo "$ext_name" | xargs)
+
+        # Skip optional "<NAME>_MOUNTS" companion entries - those aren't
+        # extensions themselves, just extra mount config for one.
+        [[ "$ext_name" == *_MOUNTS ]] && continue
         
         if [ -n "$ext_name" ]; then
             AVAILABLE_EXTENSIONS="$AVAILABLE_EXTENSIONS $ext_name"
@@ -176,23 +188,28 @@ if [ -f "$EXTENSIONS_FILE" ]; then
     done < "$EXTENSIONS_FILE"
 fi
 
-# Also check for CHEAT_ENGINE in main config
-if [ -n "${CHEAT_ENGINE:-}" ]; then
-    AVAILABLE_EXTENSIONS="$AVAILABLE_EXTENSIONS CHEAT_ENGINE"
-    EXTENSIONS_ENABLED[CHEAT_ENGINE]=0
-fi
-
 # Set CHEAT_ENGINE if not already set
 if [ -z "${CHEAT_ENGINE:-}" ]; then
     CHEAT_ENGINE="$HOME/Cheat Engine/Cheat Engine.exe"
 fi
 
-# Get the actual Cheat Engine executable path
+# Get the actual Cheat Engine executable path (handles 32/64-bit variants)
 TARGET_CE="$(get_cheat_engine_exe)"
-if [ -z "$TARGET_CE" ] || [ ! -f "$TARGET_CE" ]; then
-    echo "WARNING: Cheat Engine not found at ${TARGET_CE:-not configured}"
-else
+if [ -n "$TARGET_CE" ] && [ -f "$TARGET_CE" ]; then
     CHEAT_ENGINE="$(realpath "$TARGET_CE")"
+
+    # Register Cheat Engine as a regular extension (only if it's actually
+    # installed, and only if it's not already listed in extensions.conf).
+    case " $AVAILABLE_EXTENSIONS " in
+        *" CHEAT_ENGINE "*) ;;
+        *)
+            AVAILABLE_EXTENSIONS="$AVAILABLE_EXTENSIONS CHEAT_ENGINE"
+            EXTENSIONS_ENABLED[CHEAT_ENGINE]=0
+            ;;
+    esac
+else
+    echo "WARNING: Cheat Engine not found at ${TARGET_CE:-not configured}"
+    CHEAT_ENGINE=""
 fi
 
 cleanup_stale_running
@@ -214,10 +231,17 @@ fi
 GAME="$(realpath "$GAME")"
 
 # --------------------------------------------------
-# Cheat Engine Standalone Mode (Legacy Support)
+# Extension Attach / Standalone Launch
+#
+# If the requested executable is itself a configured extension (Cheat
+# Engine, an overlay tool, etc.) run the F1-F5 attach pipeline instead of
+# treating it like a normal game. handle_extension_launch exits the process
+# itself in every case where it actually handles the launch; it only
+# returns (with status 1) when $GAME isn't a recognized extension, in which
+# case we fall through to normal game execution below.
 # --------------------------------------------------
 
-handle_cheat_engine_mode
+handle_extension_launch "$GAME"
 
 # --------------------------------------------------
 # Normal Game Execution Setup

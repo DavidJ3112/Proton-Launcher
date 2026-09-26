@@ -150,14 +150,13 @@ EOF
         from_version=3
     fi
     
-    # Version 3 to 4: Set default extension enabled to 0, add window_mode if missing
+    # Version 3 to 4: Set default extension enabled to 0
+    # NOTE: window_mode was already added in the 2->3 step above. Re-running
+    # "ALTER TABLE games ADD COLUMN window_mode" here was a bug - it threw a
+    # "duplicate column name" error on every fresh 0->5 migration chain.
     if [ "$from_version" -eq 3 ]; then
         sqlite3 "$db_path" <<'EOF'
-ALTER TABLE games ADD COLUMN window_mode TEXT NOT NULL DEFAULT 'default';
 UPDATE game_extensions SET enabled = 0 WHERE enabled = 1;
-EOF
-        # Ensure all games have window_mode
-        sqlite3 "$db_path" <<'EOF'
 UPDATE games SET window_mode = 'default' WHERE window_mode IS NULL;
 EOF
         sqlite3 "$db_path" "UPDATE meta SET value='4' WHERE key='version';"

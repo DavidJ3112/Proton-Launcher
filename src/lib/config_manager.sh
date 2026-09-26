@@ -45,11 +45,19 @@ EOF
         cat > "$EXTENSIONS_FILE" <<'EOF'
 # Custom Extensions Configuration
 # Format: EXTENSION_NAME="path/to/executable"
-# These will be available to launch alongside games
+# These will be available to launch alongside games, or to attach/launch
+# standalone via the launcher's extension attach flow.
 
 # Example:
 # CHEAT_ENGINE="$HOME/Cheat Engine/Cheat Engine.exe"
 # OVERLAY="$HOME/overlay/overlay.exe"
+
+# Optional: extra directories an extension needs mounted into the Proton
+# prefix when it is attached to a running game (colon-separated paths).
+# Format: EXTENSION_NAME_MOUNTS="/path/one:/path/two"
+#
+# Example:
+# OVERLAY_MOUNTS="$HOME/overlay-assets:$HOME/overlay-config"
 EOF
         chmod 644 "$EXTENSIONS_FILE"
     fi
@@ -101,6 +109,38 @@ get_extension_path() {
     fi
     
     return 1
+}
+
+# Get extra mount paths configured for an extension (colon-separated), if any.
+# Read from a "<NAME>_MOUNTS=\"...\"" line in extensions.conf. Never fatal if
+# missing - callers should treat an empty result as "no extra mounts".
+get_extension_mounts() {
+    local ext_name="$1"
+    local value
+
+    if [ -f "$EXTENSIONS_FILE" ]; then
+        value=$(grep -o "^${ext_name}_MOUNTS=\"[^\"]*\"" "$EXTENSIONS_FILE" | cut -d'"' -f2)
+        if [ -n "$value" ]; then
+            echo "$value"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Resolve the configured executable path for an extension name, bridging the
+# special-cased CHEAT_ENGINE variable (which can come from the main config
+# file instead of extensions.conf) with regular extensions.conf entries.
+get_configured_extension_path() {
+    local ext_name="$1"
+
+    if [ "$ext_name" = "CHEAT_ENGINE" ]; then
+        printf '%s' "${CHEAT_ENGINE:-}"
+        return 0
+    fi
+
+    get_extension_path "$ext_name"
 }
 
 # Set extension path
