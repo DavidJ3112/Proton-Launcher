@@ -57,11 +57,6 @@ mkdir -p "$LOG_DIR" "$GAME_LOG_DIR"
 export GST_DEBUG=0
 export G_MESSAGES_DEBUG=none
 
-# Disable Proton's built-in gamemode auto-detection to prevent
-# "gamemodeauto: dlopen failed - libgamemode.so" errors.
-# Our launcher calls gamemoderun explicitly, so we handle it ourselves.
-export STEAM_COMPAT_DISABLE_GAMEMODE=1
-
 set -u
 
 # --------------------------------------------------
