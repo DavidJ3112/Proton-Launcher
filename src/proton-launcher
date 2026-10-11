@@ -109,6 +109,7 @@ FLAG_PROTON=""
 FLAG_PREFIX_MODE=""
 FLAG_MANGO=""
 FLAG_CE=""
+FLAG_GAMEMODE=""
 CONFIG_MODE=0
 FLAG_WINDOW=""
 
@@ -144,6 +145,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ce)
             FLAG_CE="$2"
+            shift 2
+            ;;
+        --gamemode)
+            FLAG_GAMEMODE="$2"
             shift 2
             ;;
 
@@ -291,6 +296,7 @@ fi
 [ -n "$FLAG_PREFIX_MODE" ] && PREFIX_MODE="$FLAG_PREFIX_MODE"
 [ -n "$FLAG_MANGO" ] && MANGOHUD="$FLAG_MANGO"
 [ -n "$FLAG_CE" ] && CE_AUTOBOOT="$FLAG_CE"
+[ -n "$FLAG_GAMEMODE" ] && GAMEMODERUN="$FLAG_GAMEMODE"
 
 
 # Parse window flag (format: WxH or mode:WxH)

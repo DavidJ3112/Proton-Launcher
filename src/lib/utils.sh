@@ -124,7 +124,7 @@ load_game_config() {
     local marker="$1" row esc_marker
     esc_marker="$(sql_escape "$marker")"
     row="$(sqlite3 -separator '|' "$DB" \
-        "SELECT prefix_mode, manual_name, proton_name, cheat_engine_autoboot, mangohud, \
+        "SELECT prefix_mode, manual_name, proton_name, cheat_engine_autoboot, mangohud, gamemoderun, \
                 window_width, window_height, window_mode
          FROM games WHERE marker_id = '$esc_marker' LIMIT 1;")"
 
@@ -132,7 +132,7 @@ load_game_config() {
         return 1
     fi
 
-    IFS='|' read -r PREFIX_MODE MANUAL_NAME SEL_PROTON_NAME CE_AUTOBOOT MANGOHUD \
+    IFS='|' read -r PREFIX_MODE MANUAL_NAME SEL_PROTON_NAME CE_AUTOBOOT MANGOHUD GAMEMODERUN \
          WINDOW_WIDTH WINDOW_HEIGHT WINDOW_MODE <<< "$row"
 
     if [ -n "$SEL_PROTON_NAME" ]; then
