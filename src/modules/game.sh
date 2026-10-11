@@ -62,6 +62,8 @@ launch_game() {
     
     if [ "$GAMEMODERUN" = "1" ]; then
         if command -v gamemoderun >/dev/null 2>&1; then
+            # Run gamemoderun as a wrapper around the entire command
+            # This ensures gamemode is active for the umu-run process
             launch_cmd="gamemoderun $launch_cmd"
         else
             echo "WARNING: gamemoderun not found in PATH. GameMode disabled."
