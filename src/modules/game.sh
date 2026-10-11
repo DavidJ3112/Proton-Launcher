@@ -58,16 +58,10 @@ launch_game() {
     echo "  Game Log: $GAME_LOG"
 
     # Launch game
-    local launch_cmd="umu-run"
-    
-    if [ "$GAMEMODERUN" = "1" ]; then
-        launch_cmd="gamemoderun $launch_cmd"
-    fi
-    
     if [ "$MANGOHUD" = "1" ]; then
-        MANGOHUD=1 $launch_cmd "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
+        MANGOHUD=1 umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
     else
-        $launch_cmd "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
+        umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
     fi
     PID=$!
 
@@ -103,7 +97,7 @@ persist_game_config() {
     
     sqlite3 "$DB" "INSERT INTO games
         (marker_id, name, prefix_mode, manual_name, proton_name,
-         cheat_engine_autoboot, mangohud, gamemoderun, is_32bit, last_path, last_launched,
+         cheat_engine_autoboot, mangohud, is_32bit, last_path, last_launched,
          window_width, window_height, window_mode)
         VALUES
         ('$(sql_escape "$marker_id")',
@@ -113,7 +107,6 @@ persist_game_config() {
          '$(sql_escape "$SEL_PROTON_NAME")',
          $CE_AUTOBOOT,
          $MANGOHUD,
-         $GAMEMODERUN,
          $IS_32BIT,
          '$(sql_escape "$GAME")',
          datetime('now'),
@@ -127,7 +120,6 @@ persist_game_config() {
             proton_name='$(sql_escape "$SEL_PROTON_NAME")',
             cheat_engine_autoboot=$CE_AUTOBOOT,
             mangohud=$MANGOHUD,
-            gamemoderun=$GAMEMODERUN,
             is_32bit=$IS_32BIT,
             last_path='$(sql_escape "$GAME")',
             last_launched=datetime('now'),

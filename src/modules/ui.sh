@@ -90,7 +90,6 @@ show_launch_or_settings() {
             "$window_line"
             "Cheat Engine autoboot: $([ "$CE_AUTOBOOT" = "1" ] && echo On || echo Off)"
             "MangoHud: $([ "$MANGOHUD" = "1" ] && echo On || echo Off)"
-            "GameMode: $([ "$GAMEMODERUN" = "1" ] && echo On || echo Off)"
         )
         
         # Add extensions to menu if available
@@ -142,9 +141,6 @@ show_launch_or_settings() {
                 ;;
             "MangoHud:"*)
                 MANGOHUD=$([ "$MANGOHUD" = "1" ] && echo 0 || echo 1)
-                ;;
-            "GameMode:"*)
-                GAMEMODERUN=$([ "$GAMEMODERUN" = "1" ] && echo 0 || echo 1)
                 ;;
             *)
                 # Check if it's an extension toggle

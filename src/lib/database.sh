@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS games (
     proton_name           TEXT,
     cheat_engine_autoboot INTEGER NOT NULL DEFAULT 0,
     mangohud              INTEGER NOT NULL DEFAULT 1,
-    gamemoderun           INTEGER NOT NULL DEFAULT 1,
     is_32bit              INTEGER NOT NULL DEFAULT 0,
     last_path             TEXT,
     last_launched         TEXT,

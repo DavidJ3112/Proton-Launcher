@@ -35,7 +35,6 @@ PREFIX_ROOT="$HOME/Games/ProtonPrefixes"
 
 # Default settings for new games
 DEFAULT_MANGOHUD=1
-DEFAULT_GAMEMODERUN=1
 DEFAULT_CE_AUTOBOOT=0
 EOF
         chmod 644 "$CONFIG_FILE"
