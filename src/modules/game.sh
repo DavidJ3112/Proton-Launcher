@@ -61,13 +61,7 @@ launch_game() {
     local launch_cmd="umu-run"
     
     if [ "$GAMEMODERUN" = "1" ]; then
-        if command -v gamemoderun >/dev/null 2>&1; then
-            launch_cmd="gamemoderun $launch_cmd"
-        else
-            echo "WARNING: gamemoderun not found in PATH. GameMode disabled."
-            echo "Install with: sudo pacman -S gamemode"
-            GAMEMODERUN=0
-        fi
+        launch_cmd="gamemoderun $launch_cmd"
     fi
     
     if [ "$MANGOHUD" = "1" ]; then

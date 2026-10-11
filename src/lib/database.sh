@@ -2,7 +2,7 @@
 # Database Manager for Proton Launcher
 # Implements versioned database schema
 
-DB_VERSION=6
+DB_VERSION=5
 
 # Initialize database with versioning
 init_database() {
@@ -168,15 +168,6 @@ EOF
     if [ "$from_version" -eq 4 ]; then
         sqlite3 "$db_path" "UPDATE meta SET value='5' WHERE key='version';"
         from_version=5
-    fi
-    
-    # Version 5 to 6: Add gamemoderun column
-    if [ "$from_version" -eq 5 ]; then
-        sqlite3 "$db_path" <<'EOF'
-ALTER TABLE games ADD COLUMN gamemoderun INTEGER NOT NULL DEFAULT 1;
-EOF
-        sqlite3 "$db_path" "UPDATE meta SET value='6' WHERE key='version';"
-        from_version=6
     fi
     
     echo "Database upgraded to version $DB_VERSION"
