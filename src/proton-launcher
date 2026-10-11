@@ -280,6 +280,7 @@ else
     SEL_PROTON_PATH=""
     CE_AUTOBOOT=0
     MANGOHUD=1
+    GAMEMODERUN=1
     WINDOW_WIDTH=""
     WINDOW_HEIGHT=""
     WINDOW_MODE="default"
