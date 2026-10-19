@@ -22,11 +22,21 @@ launch_game() {
 
     export WINEPREFIX="$PREFIX"
     export PROTONPATH="$SEL_PROTON_PATH"
-    export WINEDLLOVERRIDES="winhttp.dll=n,b;winegstreamer="
+    export WINEDLLOVERRIDES="winhttp.dll=n,b;winegstreamer=;mscoree,mono,n;"
     export PROTON_ENABLE_WAYLAND=0
     export WINEDEBUG="+err,+warn,+module"
     export PROTON_LOG=1
     export PROTON_LOG_DIR="${LOG_DIR:-$HOME/.local/share/proton-launcher/logs}"
+
+    # Melon Loader / Mod compatibility
+    export STEAM_COMPAT_DATA_PATH="$PREFIX"
+    export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
+    export STEAM_COMPAT_LIBRARY_PATHS="/home"
+    export PROTON_VERB="run"
+
+    # Unity game compatibility
+    export PROTON_USE_WINED3D=1
+    export PROTON_NO_ESYNC=1
 
     # Game log handling
     local timestamp
@@ -35,6 +45,19 @@ launch_game() {
 
     # Clean up old game logs (keep max 2)
     cleanup_game_logs
+
+    # Log environment variables for debugging
+    echo "=== Environment Variables ===" >> "$GAME_LOG"
+    echo "WINEPREFIX=$WINEPREFIX" >> "$GAME_LOG"
+    echo "PROTONPATH=$PROTONPATH" >> "$GAME_LOG"
+    echo "STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH" >> "$GAME_LOG"
+    echo "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH" >> "$GAME_LOG"
+    echo "STEAM_COMPAT_LIBRARY_PATHS=$STEAM_COMPAT_LIBRARY_PATHS" >> "$GAME_LOG"
+    echo "PROTON_VERB=$PROTON_VERB" >> "$GAME_LOG"
+    echo "PROTON_USE_WINED3D=$PROTON_USE_WINED3D" >> "$GAME_LOG"
+    echo "PROTON_NO_ESYNC=$PROTON_NO_ESYNC" >> "$GAME_LOG"
+    echo "WINEDLLOVERRIDES=$WINEDLLOVERRIDES" >> "$GAME_LOG"
+    echo "=== End Environment ===" >> "$GAME_LOG"
 
     # 32-Bit Execution Enhancements
     if [ "$IS_32BIT" -eq 1 ]; then
@@ -216,6 +239,8 @@ launch_extension() {
     export WINEPREFIX="$game_prefix"
     export PROTONPATH="$game_proton_path"
     export PROTON_VERB="runinprefix"
+    export STEAM_COMPAT_DATA_PATH="$game_prefix"
+    export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
     export STEAM_COMPAT_LIBRARY_PATHS="/home"
 
     local mounts
@@ -402,6 +427,8 @@ launch_attached_extension() {
     export WINEPREFIX="$ATTACH_PREFIX"
     export PROTONPATH="$ATTACH_PROTON_PATH"
     export PROTON_VERB="runinprefix"
+    export STEAM_COMPAT_DATA_PATH="$ATTACH_PREFIX"
+    export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
     export STEAM_COMPAT_LIBRARY_PATHS="/home"
 
     if [ -n "$ATTACH_MOUNTS" ]; then
@@ -448,6 +475,8 @@ launch_extension_standalone() {
     export WINEPREFIX="$prefix"
     export PROTONPATH="$default_proton"
     export PROTON_VERB="runinprefix"
+    export STEAM_COMPAT_DATA_PATH="$prefix"
+    export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
     export STEAM_COMPAT_LIBRARY_PATHS="/home"
 
     local mounts
