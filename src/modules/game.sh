@@ -29,10 +29,9 @@ launch_game() {
     export PROTON_LOG_DIR="${LOG_DIR:-$HOME/.local/share/proton-launcher/logs}"
 
     # Melon Loader / Mod compatibility
-    export STEAM_COMPAT_DATA_PATH="$GAME_DIR"
+    export STEAM_COMPAT_DATA_PATH="$PREFIX"
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
-    export STEAM_COMPAT_LIBRARY_PATHS="${STEAM_PROTON:-$HOME/.local/share/Steam/steamapps/common}"
-    export STEAM_COMPAT_MOUNTS="$GAME_DIR:$GAME_DIR"
+    export STEAM_COMPAT_LIBRARY_PATHS="/home"
     export PROTON_VERB="run"
 
     # Unity game compatibility
@@ -242,7 +241,7 @@ launch_extension() {
     export PROTON_VERB="runinprefix"
     export STEAM_COMPAT_DATA_PATH="$game_prefix"
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
-    export STEAM_COMPAT_LIBRARY_PATHS="${STEAM_PROTON:-$HOME/.local/share/Steam/steamapps/common}"
+    export STEAM_COMPAT_LIBRARY_PATHS="/home"
 
     local mounts
     if mounts="$(get_extension_mounts "$ext_name" 2>/dev/null)" && [ -n "$mounts" ]; then
@@ -430,7 +429,7 @@ launch_attached_extension() {
     export PROTON_VERB="runinprefix"
     export STEAM_COMPAT_DATA_PATH="$ATTACH_PREFIX"
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
-    export STEAM_COMPAT_LIBRARY_PATHS="${STEAM_PROTON:-$HOME/.local/share/Steam/steamapps/common}"
+    export STEAM_COMPAT_LIBRARY_PATHS="/home"
 
     if [ -n "$ATTACH_MOUNTS" ]; then
         export STEAM_COMPAT_MOUNTS="$ATTACH_MOUNTS"
@@ -478,7 +477,7 @@ launch_extension_standalone() {
     export PROTON_VERB="runinprefix"
     export STEAM_COMPAT_DATA_PATH="$prefix"
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
-    export STEAM_COMPAT_LIBRARY_PATHS="${STEAM_PROTON:-$HOME/.local/share/Steam/steamapps/common}"
+    export STEAM_COMPAT_LIBRARY_PATHS="/home"
 
     local mounts
     if mounts="$(get_extension_mounts "$EXT_NAME" 2>/dev/null)" && [ -n "$mounts" ]; then
