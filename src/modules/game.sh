@@ -30,19 +30,10 @@ launch_game() {
     export PROTON_LOG_DIR="${LOG_DIR:-$HOME/.local/share/proton-launcher/logs}"
 
     # Melon Loader / Mod compatibility
-    if [ "$PREFIX_MODE" = "native" ]; then
-        # Native mode: mount game dir into prefix, launch from there
-        export STEAM_COMPAT_DATA_PATH="$PREFIX"
-        export STEAM_COMPAT_MOUNTS="$GAME_DIR:/game"
-        local GAME_PATH_IN_PREFIX="/game/$(basename "$game_path")"
-    else
-        # Standard modes: use game dir as compat data path
-        export STEAM_COMPAT_DATA_PATH="$GAME_DIR"
-        export STEAM_COMPAT_MOUNTS="$GAME_DIR/MelonLoader:$GAME_DIR/MelonLoader;$GAME_DIR/Mods:$GAME_DIR/Mods;$GAME_DIR:$GAME_DIR"
-        local GAME_PATH_IN_PREFIX="$game_path"
-    fi
+    export STEAM_COMPAT_DATA_PATH="$GAME_DIR"
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
     export STEAM_COMPAT_LIBRARY_PATHS="${STEAM_PROTON:-$HOME/.local/share/Steam/steamapps/common}"
+    export STEAM_COMPAT_MOUNTS="$GAME_DIR/MelonLoader:$GAME_DIR/MelonLoader;$GAME_DIR/Mods:$GAME_DIR/Mods;$GAME_DIR:$GAME_DIR"
     export PROTON_VERB="run"
 
     # Unity game compatibility
@@ -94,18 +85,19 @@ launch_game() {
 
     # Launch game
     if [ "$PREFIX_MODE" = "native" ]; then
-        # Launch from mounted game directory inside prefix
+        # Launch from game directory with relative path (like .bat file does)
+        local relative_exe="$(basename "$game_path")"
         if [ "$MANGOHUD" = "1" ]; then
-            MANGOHUD=1 umu-run "$GAME_PATH_IN_PREFIX" > >(tee -a "$GAME_LOG") 2>&1 &
+            (cd "$GAME_DIR" && MANGOHUD=1 umu-run "./$relative_exe") > >(tee -a "$GAME_LOG") 2>&1 &
         else
-            umu-run "$GAME_PATH_IN_PREFIX" > >(tee -a "$GAME_LOG") 2>&1 &
+            (cd "$GAME_DIR" && umu-run "./$relative_exe") > >(tee -a "$GAME_LOG") 2>&1 &
         fi
     else
-        # Launch from game directory (standard modes)
+        # Launch from prefix (default behavior)
         if [ "$MANGOHUD" = "1" ]; then
-            (cd "$GAME_DIR" && MANGOHUD=1 umu-run "./$(basename "$game_path")") > >(tee -a "$GAME_LOG") 2>&1 &
+            MANGOHUD=1 umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
         else
-            (cd "$GAME_DIR" && umu-run "./$(basename "$game_path")") > >(tee -a "$GAME_LOG") 2>&1 &
+            umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
         fi
     fi
     PID=$!
