@@ -85,11 +85,12 @@ launch_game() {
 
     # Launch game
     if [ "$PREFIX_MODE" = "native" ]; then
-        # Launch from game directory (like .bat file does)
+        # Launch from game directory with relative path (like .bat file does)
+        local relative_exe="$(basename "$game_path")"
         if [ "$MANGOHUD" = "1" ]; then
-            (cd "$GAME_DIR" && MANGOHUD=1 umu-run "$game_path") > >(tee -a "$GAME_LOG") 2>&1 &
+            (cd "$GAME_DIR" && MANGOHUD=1 umu-run "./$relative_exe") > >(tee -a "$GAME_LOG") 2>&1 &
         else
-            (cd "$GAME_DIR" && umu-run "$game_path") > >(tee -a "$GAME_LOG") 2>&1 &
+            (cd "$GAME_DIR" && umu-run "./$relative_exe") > >(tee -a "$GAME_LOG") 2>&1 &
         fi
     else
         # Launch from prefix (default behavior)
