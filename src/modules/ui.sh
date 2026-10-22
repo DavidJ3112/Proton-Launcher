@@ -64,7 +64,6 @@ show_launch_or_settings() {
             auto)      mode_line="Prefix mode: Auto ($AUTO_NAME)" ;;
             directory) mode_line="Prefix mode: Directory ($DIR_NAME)" ;;
             manual)    mode_line="Prefix mode: Manual (${MANUAL_NAME:-not set})" ;;
-            native)    mode_line="Prefix mode: Native (Game Dir)" ;;
             *)         mode_line="Prefix mode: Auto ($AUTO_NAME)" ;;
         esac
 
