@@ -32,7 +32,7 @@ launch_game() {
     export STEAM_COMPAT_DATA_PATH="$GAME_DIR"
     export STEAM_COMPAT_CLIENT_INSTALL_PATH="${PROTON_BASE:-$HOME/.local/share/Steam/compatibilitytools.d}"
     export STEAM_COMPAT_LIBRARY_PATHS="${STEAM_PROTON:-$HOME/.local/share/Steam/steamapps/common}"
-    export STEAM_COMPAT_MOUNTS="$GAME_DIR/MelonLoader:$GAME_DIR/MelonLoader;$GAME_DIR/Mods:$GAME_DIR/Mods;$GAME_DIR:$GAME_DIR"
+    export STEAM_COMPAT_MOUNTS="$GAME_DIR:$GAME_DIR"
     export PROTON_VERB="run"
 
     # Unity game compatibility
@@ -54,7 +54,6 @@ launch_game() {
     echo "STEAM_COMPAT_DATA_PATH=$STEAM_COMPAT_DATA_PATH" >> "$GAME_LOG"
     echo "STEAM_COMPAT_CLIENT_INSTALL_PATH=$STEAM_COMPAT_CLIENT_INSTALL_PATH" >> "$GAME_LOG"
     echo "STEAM_COMPAT_LIBRARY_PATHS=$STEAM_COMPAT_LIBRARY_PATHS" >> "$GAME_LOG"
-    echo "STEAM_COMPAT_MOUNTS=$STEAM_COMPAT_MOUNTS" >> "$GAME_LOG"
     echo "PROTON_VERB=$PROTON_VERB" >> "$GAME_LOG"
     echo "PROTON_USE_WINED3D=$PROTON_USE_WINED3D" >> "$GAME_LOG"
     echo "PROTON_NO_ESYNC=$PROTON_NO_ESYNC" >> "$GAME_LOG"

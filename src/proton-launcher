@@ -122,7 +122,7 @@ declare -A EXTENSIONS_ENABLED
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --configure|--config|-configuration|-config)
+        --configure|--config)
             CONFIGURE=1
             shift
             ;;
