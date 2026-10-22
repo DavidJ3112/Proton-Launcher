@@ -11,7 +11,6 @@ launch_game() {
         auto)      PREFIX_NAME="$AUTO_NAME" ;;
         directory) PREFIX_NAME="$DIR_NAME" ;;
         manual)    PREFIX_NAME="${MANUAL_NAME:-$AUTO_NAME}" ;;
-        native)    PREFIX_NAME="$AUTO_NAME" ;;
         *)         PREFIX_NAME="$AUTO_NAME" ;;
     esac
 
@@ -84,20 +83,10 @@ launch_game() {
     echo "  Game Log: $GAME_LOG"
 
     # Launch game
-    if [ "$PREFIX_MODE" = "native" ]; then
-        # Launch from game directory (like .bat file does)
-        if [ "$MANGOHUD" = "1" ]; then
-            (cd "$GAME_DIR" && MANGOHUD=1 umu-run "$game_path") > >(tee -a "$GAME_LOG") 2>&1 &
-        else
-            (cd "$GAME_DIR" && umu-run "$game_path") > >(tee -a "$GAME_LOG") 2>&1 &
-        fi
+    if [ "$MANGOHUD" = "1" ]; then
+        MANGOHUD=1 umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
     else
-        # Launch from prefix (default behavior)
-        if [ "$MANGOHUD" = "1" ]; then
-            MANGOHUD=1 umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
-        else
-            umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
-        fi
+        umu-run "$game_path" > >(tee -a "$GAME_LOG") 2>&1 &
     fi
     PID=$!
 
