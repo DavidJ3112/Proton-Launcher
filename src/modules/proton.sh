@@ -54,7 +54,7 @@ manage_missing_protons() {
 # Pick prefix mode
 pick_prefix_mode() {
     local pick entered
-    pick="$(printf '%s\n' "Auto ($AUTO_NAME)" "Directory ($DIR_NAME)" "Manual" | \
+    pick="$(printf '%s\n' "Auto ($AUTO_NAME)" "Directory ($DIR_NAME)" "Manual" "Native (Game Dir)" | \
         rofi -dmenu -i -p "Prefix mode")"
 
     case "$pick" in
@@ -65,5 +65,6 @@ pick_prefix_mode() {
             [ -n "$entered" ] && MANUAL_NAME="$entered"
             PREFIX_MODE="manual"
             ;;
+        Native*) PREFIX_MODE="native" ;;
     esac
 }
